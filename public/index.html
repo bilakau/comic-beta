@@ -1,114 +1,89 @@
+<!-- Woi Kontol Lu ngapain?, mau nyuri ya lu? udh ada Wai masih aja mau genjutsu webnya malu lah sama ortu lu -->
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <base href="/">
-    <!-- Viewport setting agar terasa seperti aplikasi native (tidak bisa zoom cubit) -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FmcComic - Webtoon Station</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FmcComic - Ultimate Reader Pro</title>
     
     <link rel="icon" href="assets/icon.png" type="image/jpeg">
 
-    <!-- Library -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- CSS Utama -->
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="overflow-x-hidden bg-[#0b0b0f] text-gray-200 selection:bg-amber-500 selection:text-black">
+<body class="overflow-x-hidden">
 
-    <!-- Progress Bar (Reading Indicator) -->
     <div id="progress-bar" style="width: 0%"></div>
 
-    <!-- Navbar Desktop (Glassmorphism) -->
-    <nav id="main-nav" class="fixed top-0 w-full z-50 glass border-b border-white/5 transition-all duration-300">
+    <nav id="main-nav" class="fixed top-0 w-full z-50 glass border-b border-white/5 transition-transform duration-300">
         <div class="container mx-auto px-4 py-3 flex items-center justify-between">
-            <!-- Logo Area -->
             <div class="flex items-center gap-8">
-                <div class="flex items-center gap-3 cursor-pointer group" onclick="showHome()">
-                    <img src="assets/icon.png" onerror="this.src='https://via.placeholder.com/40?text=Fmc'" class="w-9 h-9 rounded-xl object-cover border border-amber-500/50 shadow-lg shadow-amber-500/20 group-hover:scale-105 transition">
-                    <h1 class="text-2xl font-extrabold text-amber-500 tracking-tight italic">
-                        Fmc<span class="text-white not-italic">Comic</span>
+                
+                <div class="flex items-center gap-3 cursor-pointer" onclick="showHome()">
+                    <img src="assets/icon.png" onerror="this.src='https://via.placeholder.com/40'" class="w-9 h-9 rounded-xl object-cover border border-amber-500/50 shadow-lg shadow-amber-500/20">
+                    <h1 class="text-2xl font-bold text-amber-500">
+                        Fmc<span class="text-white">Comic</span>
                     </h1>
                 </div>
 
-                <!-- Desktop Menu -->
                 <div class="hidden md:flex gap-6 text-sm font-medium">
-                    <button onclick="showHome()" class="hover:text-amber-500 transition relative group">
-                        Beranda <span class="absolute bottom-0 left-0 w-0 h-0.5 bg-amber-500 transition-all group-hover:w-full"></span>
-                    </button>
+                    <button onclick="showHome()" class="hover:text-amber-500 transition">Beranda</button>
                     <button onclick="showOngoing()" class="hover:text-amber-500 transition">Ongoing</button>
-                    <button onclick="showCompleted()" class="hover:text-amber-500 transition font-bold text-green-400">Tamat</button>
+                    <button onclick="showCompleted()" class="hover:text-amber-500 transition font-bold text-green-400">Selesai (Tamat)</button>
                 </div>
             </div>
-
-            <!-- Right Icons -->
-            <div class="flex items-center gap-2">
-                <button onclick="toggleFilter()" class="w-10 h-10 flex items-center justify-center hover:bg-white/10 rounded-full transition text-gray-300 hover:text-white"><i class="fa fa-search"></i></button>
-                <button onclick="showBookmarks()" class="w-10 h-10 flex items-center justify-center hover:bg-white/10 rounded-full transition text-gray-300 hover:text-white"><i class="fa fa-bookmark"></i></button>
+            <div class="flex items-center gap-3">
+                <button onclick="toggleFilter()" class="p-2 hover:bg-white/10 rounded-full transition"><i class="fa fa-search text-lg"></i></button>
+                <button onclick="showBookmarks()" class="p-2 hover:bg-white/10 rounded-full transition"><i class="fa fa-bookmark text-lg"></i></button>
             </div>
         </div>
     </nav>
 
-    <!-- Search & Filter Panel (Hidden by default) -->
-    <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4 shadow-2xl backdrop-blur-xl">
-        <div class="container mx-auto max-w-4xl">
-            <div class="flex flex-col gap-4 animate-fade-in">
+    <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4">
+        <div class="container mx-auto">
+            <div class="flex flex-col gap-4">
                 <div class="relative w-full">
                     <i class="fa fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
                     <input type="text" id="search-input" onkeyup="handleSearch(event)" placeholder="Cari judul komik..." 
-                        class="w-full bg-black/50 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500 transition text-white placeholder-gray-500">
+                        class="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500">
                 </div>
                 
-                <div class="flex flex-wrap gap-2 justify-between items-center">
+                <div class="flex flex-wrap gap-2 justify-between">
                     <div class="flex flex-wrap gap-2 flex-1">
-                        <select id="filter-genre" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300 cursor-pointer hover:bg-zinc-800">
+                        <select id="filter-genre" class="bg-black/40 border border-white/10 rounded-xl px-4 py-2 focus:outline-none focus:border-amber-500 text-sm text-gray-300 max-w-[150px]">
                             <option value="">Pilih Genre</option>
                         </select>
-                        <select id="filter-type" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300 cursor-pointer hover:bg-zinc-800">
+                        <select id="filter-type" class="bg-black/40 border border-white/10 rounded-xl px-4 py-2 focus:outline-none focus:border-amber-500 text-sm text-gray-300">
                             <option value="">Semua Tipe</option>
-                            <option value="manga">Manga (JP)</option>
-                            <option value="manhwa">Manhwa (KR)</option>
-                            <option value="manhua">Manhua (CN)</option>
+                            <option value="manga">Manga</option>
+                            <option value="manhwa">Manhwa</option>
+                            <option value="manhua">Manhua</option>
                         </select>
-                        <select id="filter-status" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300 cursor-pointer hover:bg-zinc-800">
+                        <select id="filter-status" class="bg-black/40 border border-white/10 rounded-xl px-4 py-2 focus:outline-none focus:border-amber-500 text-sm text-gray-300">
                             <option value="">Semua Status</option>
                             <option value="ongoing">Ongoing</option>
                             <option value="completed">Completed</option>
                         </select>
                     </div>
-                    <button onclick="applyAdvancedFilter()" class="amber-gradient px-6 py-2 rounded-lg font-bold text-black text-xs hover:scale-105 transition w-full md:w-auto mt-2 md:mt-0 shadow-lg shadow-amber-500/20">
-                        Cari Komik
-                    </button>
+                    <button onclick="applyAdvancedFilter()" class="amber-gradient px-8 py-2 rounded-xl font-bold text-black text-sm hover:opacity-90 transition w-full md:w-auto mt-2 md:mt-0">Cari</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Main Content Injection Point -->
-    <main id="content-area" class="min-h-screen pb-24 md:pb-10 pt-24">
-        <!-- Konten akan diisi oleh script.js -->
+    <main class="container mx-auto mt-24 px-4 pb-32">
+        <div id="content-area"></div>
     </main>
 
-    <!-- Mobile Navigation (Bottom Bar) -->
-    <div id="mobile-nav" class="fixed bottom-0 w-full glass border-t border-white/5 flex justify-around items-center px-2 py-3 md:hidden z-50 transition-transform duration-300 pb-safe">
-        <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 hover:text-white active:text-amber-500 w-16 transition group">
-            <i class="fa fa-house text-lg mb-0.5 group-active:scale-110 transition"></i>
-            <span class="text-[9px] font-medium">Home</span>
-        </button>
-        <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 hover:text-white active:text-amber-500 w-16 transition group">
-            <i class="fa fa-fire text-lg mb-0.5 text-orange-500/80 group-active:text-orange-500 group-active:scale-110 transition"></i>
-            <span class="text-[9px] font-medium">Hot</span>
-        </button>
-        <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 hover:text-white active:text-amber-500 w-16 transition group">
-            <i class="fa fa-circle-check text-lg mb-0.5 text-green-500/80 group-active:text-green-500 group-active:scale-110 transition"></i>
-            <span class="text-[9px] font-medium">Tamat</span>
-        </button>
-        <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 hover:text-white active:text-amber-500 w-16 transition group">
-            <i class="fa fa-clock-rotate-left text-lg mb-0.5 group-active:scale-110 transition"></i>
-            <span class="text-[9px] font-medium">Riwayat</span>
-        </button>
+    <div id="mobile-nav" class="fixed bottom-0 w-full glass border-t border-white/5 flex justify-around p-3 md:hidden z-50 transition-transform duration-300">
+        <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500"><i class="fa fa-home text-lg"></i><span class="text-[10px]">Home</span></button>
+        <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500"><i class="fa fa-fire text-lg text-orange-500"></i><span class="text-[10px]">Hot</span></button>
+        <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500"><i class="fa fa-check-circle text-lg text-green-500"></i><span class="text-[10px]">Selesai</span></button>
+        <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500"><i class="fa fa-history text-lg"></i><span class="text-[10px]">Riwayat</span></button>
     </div>
 
     <script src="script.js"></script>
