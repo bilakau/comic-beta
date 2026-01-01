@@ -1,4 +1,6 @@
-/* script.js - Webtoon Style Remastered */
+/* 
+ <!-- Woi Kontol Lu ngapain?, mau nyuri ya lu? udh ada Wai masih aja mau genjutsu webnya malu lah sama ortu lu -->
+*/
 
 const API_PROXY = "https://api.nekolabs.web.id/px?url=";
 const API_BASE = "https://www.sankavollerei.com/comic/komikcast";
@@ -10,9 +12,48 @@ const mainNav = document.getElementById('main-nav');
 const mobileNav = document.getElementById('mobile-nav');
 
 let currentChapterList = [];
-let heroInterval = null; // Variable untuk menyimpan interval slider
+let currentComicSlug = '';
+let imageObserver = null;
+let chapterSearchTerm = '';
 
-// --- Helpers ---
+// Image Loading Optimization
+function initImageObserver() {
+    if (imageObserver) return;
+    
+    imageObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                const src = img.getAttribute('data-src');
+                if (src) {
+                    img.src = src;
+                    img.removeAttribute('data-src');
+                    img.onload = () => {
+                        img.classList.add('loaded');
+                        img.parentElement?.classList?.remove('image-loading');
+                    };
+                    img.onerror = () => {
+                        img.src = 'https://via.placeholder.com/800x1200/1a1a1a/ffffff?text=Gagal+Memuat+Gambar';
+                        img.classList.add('loaded');
+                    };
+                }
+                imageObserver.unobserve(img);
+            }
+        });
+    }, {
+        rootMargin: '200px',
+        threshold: 0.1
+    });
+}
+
+// Preload next image for smoother experience
+function preloadNextImage(index, images) {
+    if (index < images.length - 1) {
+        const nextImg = new Image();
+        nextImg.src = images[index + 1];
+    }
+}
+
 async function getUuidFromSlug(slug, type) {
     try {
         const res = await fetch(`${BACKEND_URL}/api/get-id`, {
@@ -34,7 +75,9 @@ async function getSlugFromUuid(uuid) {
 }
 
 function updateURL(path) {
-    if (window.location.pathname !== path) history.pushState(null, null, path);
+    if (window.location.pathname !== path) {
+        history.pushState(null, null, path);
+    }
 }
 
 function getTypeClass(type) {
@@ -47,242 +90,39 @@ function getTypeClass(type) {
 }
 
 function redirectTo404() {
-    contentArea.innerHTML = `<div class="text-center py-40 text-red-500">Error 404: Halaman tidak ditemukan.</div>`;
+    window.location.href = '/404.html';
 }
 
 async function fetchAPI(url) {
     try {
         const response = await fetch(API_PROXY + encodeURIComponent(url));
         const data = await response.json();
-        if (data.success) return data.result?.content || data.result || data;
+        if (data.success) {
+            return data.result?.content || data.result || data;
+        }
         return null;
     } catch (e) { return null; }
 }
 
 function toggleFilter() {
     filterPanel.classList.toggle('hidden');
-    if (document.getElementById('filter-genre').options.length <= 1) loadGenres();
+    const genreSelect = document.getElementById('filter-genre');
+    if (genreSelect.options.length <= 1) loadGenres();
 }
 
 function resetNavs() {
     mainNav.classList.remove('-translate-y-full');
     mobileNav.classList.remove('translate-y-full');
-    mainNav.classList.remove('opacity-0'); // Pastikan nav terlihat
     filterPanel.classList.add('hidden');
-    clearInterval(heroInterval); // Stop slider jika pindah halaman
 }
 
-function setLoading() {
-    contentArea.innerHTML = `<div class="flex flex-col h-screen items-center justify-center"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
+function toggleFullScreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch((err) => console.log(err.message));
+    } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+    }
 }
-
-// --- HOME PAGE (WEBTOON STYLE) ---
-
-async function showHome(push = true) {
-    if (push) updateURL('/'); 
-    resetNavs();
-    
-    // Skeleton Loading Keren untuk Home
-    contentArea.innerHTML = `
-        <div class="animate-pulse">
-            <div class="h-[50vh] bg-zinc-800 w-full mb-8"></div>
-            <div class="container mx-auto px-4">
-                <div class="h-8 bg-zinc-800 w-48 rounded mb-4"></div>
-                <div class="flex gap-4 overflow-hidden mb-8">
-                    <div class="h-64 w-40 bg-zinc-800 rounded-xl shrink-0"></div>
-                    <div class="h-64 w-40 bg-zinc-800 rounded-xl shrink-0"></div>
-                    <div class="h-64 w-40 bg-zinc-800 rounded-xl shrink-0"></div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    const data = await fetchAPI(`${API_BASE}/home`);
-    if(!data || !data.data) { redirectTo404(); return; }
-
-    const hot = data.data.hotUpdates || [];
-    const latest = data.data.latestReleases || [];
-    const projects = data.data.projectUpdates || [];
-
-    // 1. Logic Hero Slider (Ambil 5 komik trending teratas)
-    const heroes = hot.slice(0, 5); 
-    const heroHTML = `
-        <div class="hero-wrapper mb-8">
-            ${heroes.map((item, index) => `
-                <div class="hero-slide ${index === 0 ? 'active' : ''}" id="slide-${index}">
-                    <!-- Background Blur -->
-                    <div class="absolute inset-0 bg-cover bg-center blur-2xl opacity-50 scale-110" style="background-image: url('${item.image}');"></div>
-                    <div class="absolute inset-0 bg-black/40"></div>
-                    
-                    <!-- Main Image (Centered & Contain) -->
-                    <div class="absolute inset-0 flex items-center justify-center md:justify-end md:pr-20 pointer-events-none">
-                         <img src="${item.image}" class="h-full w-full object-cover md:object-contain md:w-auto opacity-60 md:opacity-100 mask-image-b md:mask-none">
-                    </div>
-
-                    <!-- Content Text -->
-                    <div class="hero-content container mx-auto px-4 pb-12 md:pb-20">
-                        <span class="inline-block px-3 py-1 mb-3 text-[10px] font-bold tracking-wider text-black bg-amber-500 rounded-full w-fit uppercase shadow-lg shadow-amber-500/50">
-                            Featured #${index + 1}
-                        </span>
-                        <h1 class="text-3xl md:text-6xl font-extrabold mb-2 leading-tight drop-shadow-lg max-w-2xl line-clamp-2">${item.title}</h1>
-                        <div class="flex items-center gap-4 text-sm font-medium text-gray-300 mb-6">
-                            <span class="flex items-center gap-1"><i class="fa fa-layer-group text-amber-500"></i> ${item.type || 'Manhwa'}</span>
-                            <span class="flex items-center gap-1"><i class="fa fa-star text-yellow-500"></i> Popular</span>
-                        </div>
-                        <div class="flex gap-3 pointer-events-auto">
-                            <button onclick="showDetail('${item.slug}')" class="amber-gradient text-black px-8 py-3 rounded-xl font-bold hover:scale-105 transition shadow-lg shadow-amber-500/20">
-                                Baca Sekarang
-                            </button>
-                            <button onclick="showDetail('${item.slug}')" class="glass px-4 py-3 rounded-xl hover:bg-white/10 transition">
-                                <i class="fa fa-info-circle text-lg"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `).join('')}
-            
-            <!-- Indicators -->
-            <div class="absolute bottom-6 right-6 md:right-20 flex gap-2 z-20">
-                ${heroes.map((_, i) => `
-                    <div class="w-2 h-2 md:w-3 md:h-1 rounded-full bg-white/30 cursor-pointer transition-all duration-300 slider-dot ${i===0?'bg-amber-500 w-6 md:w-8':''}" onclick="changeSlide(${i})"></div>
-                `).join('')}
-            </div>
-        </div>
-    `;
-
-    // 2. Logic Top Ranking (Hot Updates sisa)
-    const rankingItems = hot.slice(0, 10);
-    const rankingHTML = `
-        <section class="container mx-auto px-4 mb-12">
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="text-xl font-bold flex items-center gap-2"><i class="fa fa-crown text-amber-500"></i> Top Ranking</h2>
-                <button onclick="showOngoing()" class="text-xs text-gray-400 hover:text-white transition">Lihat Semua <i class="fa fa-chevron-right text-[10px]"></i></button>
-            </div>
-            <div class="flex overflow-x-auto gap-5 hide-scroll pb-6 pt-2 snap-x">
-                ${rankingItems.map((item, i) => `
-                    <div class="snap-start min-w-[140px] md:min-w-[160px] cursor-pointer relative group" onclick="showDetail('${item.slug}')">
-                        <div class="relative rounded-xl overflow-hidden aspect-[3/4] card-hover border border-white/5">
-                            <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Comic'}</span>
-                            <img src="${item.image}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
-                            <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-60"></div>
-                        </div>
-                        <!-- Ranking Number -->
-                        <div class="rank-number">${i + 1}</div>
-                        
-                        <div class="mt-3 pl-1">
-                            <h3 class="text-sm font-bold truncate group-hover:text-amber-500 transition">${item.title}</h3>
-                            <p class="text-[10px] text-gray-500">${item.chapter || item.latestChapter}</p>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        </section>
-    `;
-
-    // 3. Logic Projects (Widescreen Cards)
-    const projectHTML = projects.length > 0 ? `
-        <section class="container mx-auto px-4 mb-12">
-            <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Proyek Eksklusif</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                ${projects.slice(0,6).map(item => `
-                    <div onclick="showDetail('${item.slug}')" class="bg-zinc-900/50 border border-white/5 rounded-2xl p-3 flex gap-4 cursor-pointer hover:bg-white/5 hover:border-amber-500/30 transition group">
-                        <img src="${item.image}" class="w-20 h-28 object-cover rounded-xl shadow-lg group-hover:scale-105 transition">
-                        <div class="flex-1 flex flex-col justify-center">
-                            <span class="text-[10px] text-amber-500 font-bold uppercase tracking-wider mb-1">Exclusive</span>
-                            <h3 class="font-bold text-sm line-clamp-2 leading-tight mb-2 group-hover:text-amber-500 transition">${item.title}</h3>
-                            <span class="text-[10px] bg-white/10 px-2 py-1 rounded w-fit text-gray-300">${item.chapters[0]?.title}</span>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-        </section>
-    ` : '';
-
-    // 4. Logic Latest Update (Grid Bersih)
-    const latestHTML = `
-        <section class="container mx-auto px-4">
-            <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Rilis Terbaru</h2>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-8">
-                ${latest.map(item => `
-                    <div class="cursor-pointer group" onclick="showDetail('${item.slug}')">
-                        <div class="relative rounded-xl overflow-hidden aspect-[3/4] mb-3 border border-white/5 card-hover">
-                            <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'UP'}</span>
-                            <img src="${item.image}" loading="lazy" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
-                            <!-- Overlay Time -->
-                            <div class="absolute bottom-0 w-full p-2 bg-gradient-to-t from-black/90 to-transparent">
-                                <p class="text-[10px] text-gray-300 text-right"><i class="fa fa-clock text-[8px] mr-1"></i>${item.chapters[0]?.time || 'Baru'}</p>
-                            </div>
-                        </div>
-                        <h3 class="text-xs font-bold line-clamp-2 leading-relaxed group-hover:text-amber-500 transition h-8">${item.title}</h3>
-                        <div class="flex justify-between items-center mt-2">
-                             <span class="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">${item.chapters[0]?.title || 'Ch.?'}</span>
-                        </div>
-                    </div>
-                `).join('')}
-            </div>
-            <div class="mt-10 flex justify-center">
-                <button onclick="showOngoing(1)" class="glass px-8 py-3 rounded-full text-sm font-bold hover:bg-amber-500 hover:text-black transition">Lihat Semua Update</button>
-            </div>
-        </section>
-    `;
-
-    // Gabungkan Semua Layout
-    contentArea.innerHTML = `
-        <div class="-mt-24 md:-mt-24"> <!-- Mengkompensasi margin top main container agar Hero full ke atas -->
-            ${heroHTML}
-            ${rankingHTML}
-            ${projectHTML}
-            ${latestHTML}
-        </div>
-    `;
-
-    // Start Auto Slider
-    initSlider(heroes.length);
-    window.scrollTo(0,0);
-}
-
-// Logic untuk Slider
-let slideIndex = 0;
-function initSlider(total) {
-    if (total <= 1) return;
-    clearInterval(heroInterval);
-    
-    const showSlide = (n) => {
-        const slides = document.querySelectorAll('.hero-slide');
-        const dots = document.querySelectorAll('.slider-dot');
-        
-        slideIndex = (n + total) % total; // Cycle logic
-        
-        slides.forEach(s => s.classList.remove('active'));
-        dots.forEach(d => {
-            d.classList.remove('bg-amber-500', 'w-6', 'md:w-8');
-            d.classList.add('bg-white/30');
-        });
-
-        if(slides[slideIndex]) slides[slideIndex].classList.add('active');
-        if(dots[slideIndex]) {
-            dots[slideIndex].classList.remove('bg-white/30');
-            dots[slideIndex].classList.add('bg-amber-500', 'w-6', 'md:w-8');
-        }
-    };
-
-    window.changeSlide = (n) => {
-        clearInterval(heroInterval); // Reset timer jika user klik manual
-        showSlide(n);
-        startTimer();
-    };
-
-    const startTimer = () => {
-        heroInterval = setInterval(() => {
-            showSlide(slideIndex + 1);
-        }, 5000); // Ganti slide setiap 5 detik
-    };
-
-    startTimer();
-}
-
-
-// --- Functions Lainnya (Tetap Sama/Optimized) ---
 
 async function loadGenres() {
     const data = await fetchAPI(`${API_BASE}/genres`);
@@ -297,21 +137,95 @@ async function loadGenres() {
     }
 }
 
+async function showHome(push = true) {
+    if (push) updateURL('/'); 
+    resetNavs();
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
+    
+    const data = await fetchAPI(`${API_BASE}/home`);
+    if(!data || !data.data) { redirectTo404(); return; }
+
+    contentArea.innerHTML = `
+        <section class="mb-10">
+            <h2 class="text-2xl font-bold mb-6 flex items-center gap-2"><i class="fa fa-bolt text-amber-500"></i> Populer</h2>
+            <div class="flex overflow-x-auto gap-4 hide-scroll pb-4">
+                ${data.data.hotUpdates.map(item => `
+                    <div class="min-w-[160px] md:min-w-[200px] cursor-pointer card-hover relative" onclick="showDetail('${item.slug}')">
+                        <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Hot'}</span>
+                        <img src="${item.image}" class="h-60 md:h-72 w-full object-cover rounded-2xl shadow-xl">
+                        <h3 class="mt-3 text-sm font-bold truncate">${item.title}</h3>
+                        <p class="text-amber-500 text-xs">${item.chapter || item.latestChapter}</p>
+                    </div>
+                `).join('')}
+            </div>
+        </section>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+            <div class="lg:col-span-2">
+                <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Terbaru</h2>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    ${data.data.latestReleases.slice(0, 12).map(item => `
+                        <div class="bg-zinc-900/30 border border-white/5 p-2 rounded-2xl cursor-pointer hover:border-amber-500/50 transition relative group" onclick="showDetail('${item.slug}')">
+                            <img src="${item.image}" class="h-44 w-full object-cover rounded-xl">
+                            <h3 class="text-xs font-bold mt-2 line-clamp-2 h-8">${item.title}</h3>
+                            <p class="text-[10px] text-gray-500 mt-1">${item.chapters[0]?.title || 'Ch.?'}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            <div>
+                <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Proyek Kami</h2>
+                <div class="space-y-4">
+                    ${data.data.projectUpdates.map(item => `
+                        <div class="flex gap-4 bg-zinc-900/20 p-2 rounded-2xl cursor-pointer hover:bg-white/5 transition" onclick="showDetail('${item.slug}')">
+                            <img src="${item.image}" class="w-16 h-20 rounded-xl object-cover">
+                            <div class="flex-1 flex flex-col justify-center overflow-hidden">
+                                <h3 class="font-bold text-xs truncate">${item.title}</h3>
+                                <p class="text-amber-500 text-[10px] mt-1">${item.chapters[0]?.title}</p>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    window.scrollTo(0,0);
+}
+
+async function showOngoing(page = 1) {
+    updateURL('/ongoing'); resetNavs();
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
+    const data = await fetchAPI(`${API_BASE}/list?status=Ongoing&orderby=popular&page=${page}`);
+    renderGrid(data, "Komik Ongoing Terpopuler", "showOngoing");
+}
+
+async function showCompleted(page = 1) {
+    updateURL('/completed'); resetNavs();
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
+    const data = await fetchAPI(`${API_BASE}/list?status=Completed&orderby=popular&page=${page}`);
+    renderGrid(data, "Komik Tamat (Selesai)", "showCompleted");
+}
+
+async function showGenre(slug, page = 1) {
+    resetNavs();
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
+    const data = await fetchAPI(`${API_BASE}/genre/${slug}/${page}`);
+    if(!data || !data.data || data.data.length === 0) { redirectTo404(); return; }
+    renderGrid(data, `Genre: ${slug.toUpperCase()}`, "showGenre", slug);
+}
+
 async function applyAdvancedFilter() {
     const query = document.getElementById('search-input').value;
     const genre = document.getElementById('filter-genre').value;
     const type = document.getElementById('filter-type').value;
     const status = document.getElementById('filter-status').value;
-    
     filterPanel.classList.add('hidden');
-    setLoading();
-
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
     if (query) {
         const data = await fetchAPI(`${API_BASE}/search/${encodeURIComponent(query)}/1`);
-        renderGrid(data, `Hasil Pencarian: "${query}"`, null); return;
+        renderGrid(data, `Hasil Pencarian: ${query}`, null); return;
     }
     if (genre) { showGenre(genre, 1); return; }
-    
     let url = `${API_BASE}/list?page=1`;
     if (type) url += `&type=${type}`;
     if (status) url += `&status=${status}`;
@@ -322,69 +236,157 @@ async function applyAdvancedFilter() {
 function renderGrid(data, title, funcName, extraArg = null) {
     const list = data?.data || [];
     if(list.length === 0) {
-        contentArea.innerHTML = `<div class="text-center py-40 text-gray-500">Tidak ada komik ditemukan.</div>`; return;
+        contentArea.innerHTML = `<div class="text-center py-40 text-gray-500"><p>Komik tidak ditemukan.</p></div>`; return;
     }
-    
     let paginationHTML = '';
     if (data.pagination && funcName) {
         const current = data.pagination.currentPage;
         const argStr = extraArg ? `'${extraArg}', ` : '';
         paginationHTML = `
-            <div class="mt-14 flex justify-center items-center gap-4">
-                ${current > 1 ? `<button onclick="${funcName}(${argStr}${current - 1})" class="glass px-5 py-2 rounded-lg text-xs font-bold hover:bg-amber-500 hover:text-black transition">Prev</button>` : ''}
-                <span class="bg-amber-500 text-black px-4 py-2 rounded-lg text-xs font-extrabold shadow-lg">${current}</span>
-                ${data.pagination.hasNextPage ? `<button onclick="${funcName}(${argStr}${current + 1})" class="glass px-5 py-2 rounded-lg text-xs font-bold hover:bg-amber-500 hover:text-black transition">Next</button>` : ''}
+            <div class="mt-14 flex justify-center items-center gap-6">
+                ${current > 1 ? `<button onclick="${funcName}(${argStr}${current - 1})" class="glass px-6 py-2 rounded-xl text-xs hover:bg-amber-500 hover:text-black transition">Prev</button>` : ''}
+                <span class="bg-amber-500 text-black px-6 py-2 rounded-xl text-xs font-extrabold">${current}</span>
+                ${data.pagination.hasNextPage ? `<button onclick="${funcName}(${argStr}${current + 1})" class="glass px-6 py-2 rounded-xl text-xs hover:bg-amber-500 hover:text-black transition">Next</button>` : ''}
             </div>
         `;
     }
-
     contentArea.innerHTML = `
-        <div class="container mx-auto px-4 pt-4">
-            <h2 class="text-2xl font-bold mb-8 border-l-4 border-amber-500 pl-4">${title}</h2>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                ${list.map(item => `
-                    <div class="bg-zinc-900/40 rounded-xl overflow-hidden border border-white/5 card-hover cursor-pointer relative group" onclick="showDetail('${item.slug}')">
-                        <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Comic'}</span>
-                        <div class="relative overflow-hidden aspect-[3/4]">
-                            <img src="${item.image}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
-                        </div>
-                        <div class="p-3 text-center">
-                            <h3 class="text-xs font-bold truncate group-hover:text-amber-500 transition">${item.title}</h3>
-                            <p class="text-[10px] text-amber-500 mt-1 font-medium">${item.latestChapter || item.chapter || 'Baca'}</p>
-                        </div>
+        <h2 class="text-2xl font-bold mb-8 border-l-4 border-amber-500 pl-4">${title}</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+            ${list.map(item => `
+                <div class="bg-zinc-900/40 rounded-2xl overflow-hidden border border-white/5 card-hover cursor-pointer relative group" onclick="showDetail('${item.slug}')">
+                    <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Comic'}</span>
+                    <img src="${item.image}" class="h-64 w-full object-cover">
+                    <div class="p-3 text-center">
+                        <h3 class="text-xs font-bold truncate group-hover:text-amber-500 transition">${item.title}</h3>
+                        <p class="text-[10px] text-amber-500 mt-1">${item.latestChapter || item.chapter || 'Baca'}</p>
                     </div>
-                `).join('')}
-            </div>
-            ${paginationHTML}
+                </div>
+            `).join('')}
         </div>
+        ${paginationHTML}
     `;
     window.scrollTo(0,0);
 }
 
-async function showOngoing(page = 1) {
-    updateURL('/ongoing'); resetNavs(); setLoading();
-    const data = await fetchAPI(`${API_BASE}/list?status=Ongoing&orderby=popular&page=${page}`);
-    renderGrid(data, "Komik Ongoing Terpopuler", "showOngoing");
+// Render Chapter List dengan desain profesional
+function renderChapterList() {
+    const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
+    const savedItem = history.find(h => h.slug === currentComicSlug);
+    const lastReadSlug = savedItem?.lastChapterSlug || '';
+    
+    let filteredChapters = currentChapterList;
+    if (chapterSearchTerm) {
+        filteredChapters = currentChapterList.filter(ch => 
+            ch.title.toLowerCase().includes(chapterSearchTerm.toLowerCase())
+        );
+    }
+    
+    const chaptersHTML = filteredChapters.map((ch, index) => {
+        const isLatest = index === 0;
+        const isRead = lastReadSlug === ch.slug;
+        const chapterNumber = ch.title.match(/\d+(\.\d+)?/)?.[0] || (index + 1);
+        
+        return `
+            <div class="chapter-item ${isRead ? 'read' : ''} ${isLatest ? 'latest' : ''}" 
+                 onclick="readChapter('${ch.slug}', '${currentComicSlug}')">
+                <div class="chapter-info">
+                    <div class="chapter-number">Chapter ${chapterNumber}</div>
+                    <div class="chapter-title">${ch.title}</div>
+                    ${isLatest ? '<span class="chapter-badge">TERBARU</span>' : ''}
+                    ${isRead ? '<span class="chapter-badge">SUDAH DIBACA</span>' : ''}
+                </div>
+                <div class="chapter-actions">
+                    <button class="p-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 transition">
+                        <i class="fas fa-book-reader text-amber-500"></i>
+                    </button>
+                    <button class="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 transition">
+                        <i class="fas fa-download text-blue-500"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    return `
+        <div class="glass rounded-3xl p-6 border-white/5">
+            <div class="chapter-search-container">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold">Daftar Chapter (${currentChapterList.length})</h3>
+                    <div class="text-sm text-gray-400">
+                        <i class="fas fa-book-reader text-amber-500 mr-1"></i>
+                        ${savedItem?.lastChapterTitle ? `Terakhir dibaca: ${savedItem.lastChapterTitle}` : 'Belum ada riwayat'}
+                    </div>
+                </div>
+                <div class="relative">
+                    <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input type="text" 
+                           id="chapter-search-input" 
+                           placeholder="Cari chapter..." 
+                           oninput="filterChapterList(this.value)"
+                           class="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500"
+                           value="${chapterSearchTerm}">
+                    ${chapterSearchTerm ? `
+                        <button onclick="clearChapterSearch()" class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    ` : ''}
+                </div>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="sortChapters('asc')" class="text-xs px-3 py-1 rounded-lg glass hover:bg-amber-500/20">
+                        <i class="fas fa-sort-amount-up mr-1"></i>Terlama
+                    </button>
+                    <button onclick="sortChapters('desc')" class="text-xs px-3 py-1 rounded-lg glass hover:bg-amber-500/20">
+                        <i class="fas fa-sort-amount-down mr-1"></i>Terbaru
+                    </button>
+                    <button onclick="scrollToLatest()" class="text-xs px-3 py-1 rounded-lg glass hover:bg-amber-500/20">
+                        <i class="fas fa-arrow-down mr-1"></i>Terakhir
+                    </button>
+                </div>
+            </div>
+            <div class="chapter-scroll mt-4 max-h-[500px] overflow-y-auto">
+                ${chaptersHTML}
+            </div>
+            ${filteredChapters.length === 0 ? `
+                <div class="text-center py-8 text-gray-500">
+                    <i class="fas fa-search fa-2x mb-2"></i>
+                    <p>Tidak ada chapter yang cocok dengan pencarian</p>
+                </div>
+            ` : ''}
+        </div>
+    `;
 }
 
-async function showCompleted(page = 1) {
-    updateURL('/completed'); resetNavs(); setLoading();
-    const data = await fetchAPI(`${API_BASE}/list?status=Completed&orderby=popular&page=${page}`);
-    renderGrid(data, "Komik Tamat (Selesai)", "showCompleted");
+function filterChapterList(term) {
+    chapterSearchTerm = term;
+    document.querySelector('#chapter-list-container').innerHTML = renderChapterList();
 }
 
-async function showGenre(slug, page = 1) {
-    resetNavs(); setLoading();
-    const data = await fetchAPI(`${API_BASE}/genre/${slug}/${page}`);
-    if(!data || !data.data || data.data.length === 0) { redirectTo404(); return; }
-    renderGrid(data, `Genre: ${slug.toUpperCase()}`, "showGenre", slug);
+function clearChapterSearch() {
+    chapterSearchTerm = '';
+    document.querySelector('#chapter-search-input').value = '';
+    document.querySelector('#chapter-list-container').innerHTML = renderChapterList();
 }
 
-// --- Detail & Reader (Versi Bagus dari sebelumnya) ---
+function sortChapters(order) {
+    if (order === 'asc') {
+        currentChapterList = [...currentChapterList].reverse();
+    } else {
+        currentChapterList = [...currentChapterList].reverse();
+    }
+    document.querySelector('#chapter-list-container').innerHTML = renderChapterList();
+}
+
+function scrollToLatest() {
+    const container = document.querySelector('.chapter-scroll');
+    if (container) {
+        container.scrollTop = 0;
+    }
+}
 
 async function showDetail(idOrSlug, push = true) {
     let slug = idOrSlug;
-    setLoading();
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
 
     if (idOrSlug.length === 36) {
         const mapping = await getSlugFromUuid(idOrSlug);
@@ -402,94 +404,67 @@ async function showDetail(idOrSlug, push = true) {
 
     const res = data.data;
     currentChapterList = res.chapters;
+    currentComicSlug = slug;
+    chapterSearchTerm = '';
 
     const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
     const savedItem = history.find(h => h.slug === slug);
-    const lastCh = savedItem ? savedItem.lastChapterSlug : null;
-    const startBtnText = lastCh ? "Lanjut Baca" : "Mulai Baca";
-    const startBtnAction = lastCh ? `readChapter('${lastCh}', '${slug}')` : (res.chapters.length > 0 ? `readChapter('${res.chapters[res.chapters.length-1].slug}', '${slug}')` : "");
-
-    const backdropHTML = `
-        <div class="fixed top-0 left-0 w-full h-[60vh] -z-10 pointer-events-none overflow-hidden">
-            <img src="${res.image}" class="w-full h-full object-cover blur-2xl opacity-20 backdrop-banner">
-            <div class="absolute inset-0 bg-gradient-to-b from-[#0b0b0f]/40 via-[#0b0b0f]/80 to-[#0b0b0f]"></div>
-        </div>
-    `;
+    const startBtnText = savedItem && savedItem.lastChapterTitle ? `Lanjut: ${savedItem.lastChapterTitle}` : "Baca Chapter Pertama";
+    const startBtnAction = savedItem && savedItem.lastChapterSlug ? 
+        `readChapter('${savedItem.lastChapterSlug}', '${slug}')` : 
+        `readChapter('${res.chapters[res.chapters.length - 1].slug}', '${slug}')`;
 
     contentArea.innerHTML = `
-        ${backdropHTML}
-        <div class="container mx-auto px-4 pt-10 pb-20">
-            <div class="flex flex-col md:flex-row gap-8 lg:gap-12 animate-fade-in">
-                <div class="md:w-[260px] flex-shrink-0 mx-auto w-full max-w-[260px]">
-                    <div class="relative group">
-                        <span class="type-badge ${getTypeClass(res.type)} scale-110 top-4 left-4 shadow-lg">${res.type || 'Comic'}</span>
-                        <img src="${res.image}" class="w-full rounded-2xl shadow-2xl border border-white/10 group-hover:border-amber-500/30 transition">
-                    </div>
-                    <div class="flex flex-col gap-3 mt-6">
-                        <button onclick="${startBtnAction}" class="amber-gradient w-full py-3.5 rounded-xl font-bold text-black flex items-center justify-center gap-2 hover:scale-[1.02] transition shadow-lg shadow-amber-500/20">
-                            <i class="fa fa-book-open"></i> ${startBtnText}
-                        </button>
-                        <button onclick="toggleBookmark('${slug}', '${res.title.replace(/'/g, "")}', '${res.image}')" id="btn-bookmark" class="w-full py-3.5 rounded-xl glass font-semibold hover:bg-white/10 transition flex items-center justify-center gap-2"><i class="fa fa-bookmark"></i> Simpan</button>
+        <div class="flex flex-col md:flex-row gap-10">
+            <div class="md:w-1/3">
+                <div class="relative">
+                    <span class="type-badge ${getTypeClass(res.type)} scale-125 top-5 left-5">${res.type || 'Comic'}</span>
+                    <img src="${res.image}" class="w-full rounded-3xl shadow-2xl border border-white/10">
+                </div>
+                <div class="flex flex-col gap-3 mt-6">
+                    <button onclick="${startBtnAction}" class="amber-gradient w-full py-4 rounded-2xl font-bold text-black flex items-center justify-center gap-2 active:scale-95 transition">
+                        <i class="fa fa-play"></i> ${startBtnText}
+                    </button>
+                    <button onclick="toggleBookmark('${slug}', '${res.title.replace(/'/g, "")}', '${res.image}')" id="btn-bookmark"
+                        class="w-full py-4 rounded-2xl glass font-bold border-white/10 hover:bg-white/5 transition">
+                        <i class="fa fa-bookmark"></i> Simpan Koleksi
+                    </button>
+                    <div class="glass rounded-2xl p-4 mt-4">
+                        <h4 class="font-bold text-sm mb-2">Info Komik</h4>
+                        <div class="space-y-2 text-xs">
+                            <div class="flex justify-between"><span class="text-gray-400">Author:</span><span class="font-medium">${res.author || 'Unknown'}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">Status:</span><span class="font-medium text-green-400">${res.status}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">Rating:</span><span class="font-medium text-amber-500">⭐ ${res.rating}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-400">Total Chapter:</span><span class="font-medium">${res.chapters.length}</span></div>
+                        </div>
                     </div>
                 </div>
-                <div class="flex-1 min-w-0">
-                    <h1 class="text-3xl md:text-5xl font-extrabold mb-4 leading-tight">${res.title}</h1>
-                    <div class="flex gap-3 mb-6">
-                        <span class="glass px-3 py-1 rounded text-xs font-bold text-amber-400">⭐ ${res.rating}</span>
-                        <span class="glass px-3 py-1 rounded text-xs font-bold text-green-400">● ${res.status}</span>
-                    </div>
-                    <p class="text-gray-300 text-sm leading-relaxed text-justify mb-8 line-clamp-6 hover:line-clamp-none cursor-pointer">${res.synopsis || "..."}</p>
-                    
-                    <div class="glass rounded-2xl border border-white/10 overflow-hidden">
-                        <div class="p-4 border-b border-white/5 flex justify-between items-center bg-white/5">
-                            <h3 class="font-bold flex items-center gap-2"><i class="fa fa-list"></i> Chapter <span class="bg-amber-500 text-black text-[10px] px-2 rounded-full">${res.chapters.length}</span></h3>
-                            <input type="text" id="chapter-search" onkeyup="filterChapters()" placeholder="Cari..." class="bg-black/30 border border-white/10 rounded px-3 py-1 text-xs w-32 focus:border-amber-500 focus:outline-none">
-                        </div>
-                        <div id="chapter-list-container" class="max-h-[500px] overflow-y-auto p-2 bg-black/20 chapter-list-scroll"></div>
-                    </div>
+            </div>
+            <div class="md:w-2/3">
+                <div class="flex flex-wrap gap-2 mb-4">
+                    ${res.genres ? res.genres.map(g => `<span class="bg-amber-500/10 text-amber-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase border border-amber-500/20">${g.title}</span>`).join('') : ''}
+                </div>
+                <h1 class="text-3xl font-extrabold mb-4">${res.title}</h1>
+                
+                <p class="text-gray-400 text-sm leading-relaxed mb-8 text-justify">${res.synopsis || "Sinopsis tidak tersedia."}</p>
+                
+                <div id="chapter-list-container">
+                    ${renderChapterList()}
                 </div>
             </div>
         </div>
     `;
-    renderChapterList(res.chapters, slug);
     checkBookmarkStatus(slug);
     saveHistory(slug, res.title, res.image);
     window.scrollTo(0,0);
 }
 
-function renderChapterList(chapters, comicSlug) {
-    const container = document.getElementById('chapter-list-container');
-    const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-    const comicHistory = history.find(h => h.slug === comicSlug);
-    const lastReadSlug = comicHistory ? comicHistory.lastChapterSlug : '';
-
-    container.innerHTML = chapters.map(ch => {
-        const isLastRead = ch.slug === lastReadSlug;
-        return `
-            <div onclick="readChapter('${ch.slug}', '${comicSlug}')" class="chapter-item flex justify-between p-3 mb-1 rounded-xl cursor-pointer border border-transparent transition ${isLastRead ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 hover:bg-white/10'}">
-                <span class="text-sm font-medium ${isLastRead ? 'text-amber-500' : 'text-gray-300'}">${ch.title}</span>
-                <span class="text-[10px] text-gray-500">${ch.time || ''}</span>
-            </div>
-        `;
-    }).join('');
-}
-
-function filterChapters() {
-    const input = document.getElementById('chapter-search').value.toLowerCase();
-    const items = document.getElementsByClassName('chapter-item');
-    for (let item of items) {
-        item.style.display = item.innerText.toLowerCase().includes(input) ? "" : "none";
-    }
-}
-
-// --- Reader (Full Screen Logic) ---
-
 async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     let chSlug = chIdOrSlug;
-    contentArea.innerHTML = `<div class="flex flex-col h-screen items-center justify-center gap-4"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div><p class="text-xs animate-pulse">Memuat Chapter...</p></div>`;
+    contentArea.innerHTML = `<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div></div>`;
 
-    if (idOrSlug.length === 36) {
-        const mapping = await getSlugFromUuid(idOrSlug);
+    if (chIdOrSlug.length === 36) {
+        const mapping = await getSlugFromUuid(chIdOrSlug);
         if (mapping) chSlug = mapping.slug;
     }
 
@@ -503,55 +478,132 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     
     const data = await fetchAPI(`${API_BASE}/chapter/${chSlug}`);
     if(!data || !data.data) { redirectTo404(); return; }
-    const res = data.data;
 
-    let dropdownHTML = `<select onchange="readChapter(this.value, '${comicSlug}')" class="bg-black/50 text-white border border-white/10 rounded-lg text-xs py-2 px-2 outline-none w-32 truncate">
-        ${currentChapterList.map(ch => `<option value="${ch.slug}" ${ch.slug === chSlug ? 'selected' : ''}>${ch.title}</option>`).join('')}
-    </select>`;
+    const res = data.data;
+    const backAction = comicSlug ? `showDetail('${comicSlug}')` : `showHome()`;
+
+    let dropdownHTML = '';
+    if (currentChapterList && currentChapterList.length > 0) {
+        dropdownHTML = `
+            <select onchange="readChapter(this.value, '${comicSlug || ''}')" class="bg-black/80 text-white border border-white/20 rounded-lg text-xs p-2 mx-2 max-w-[150px]">
+                ${currentChapterList.map(ch => `<option value="${ch.slug}" ${ch.slug === chSlug ? 'selected' : ''}>${ch.title}</option>`).join('')}
+            </select>
+        `;
+    } else { dropdownHTML = `<span class="text-xs font-bold px-4">Navigasi</span>`; }
+
+    // Optimized image loading with Intersection Observer
+    initImageObserver();
+    
+    const imagesHTML = res.images.map((img, index) => `
+        <div class="image-loading mb-1 max-w-full md:max-w-3xl mx-auto">
+            <img data-src="${img}" 
+                 class="chapter-image max-w-full"
+                 alt="Halaman ${index + 1}"
+                 onload="preloadNextImage(${index}, ${JSON.stringify(res.images)})">
+        </div>
+    `).join('');
 
     contentArea.innerHTML = `
-        <div class="relative min-h-screen bg-[#0b0b0f] -mx-4 -mt-24">
-            <div id="reader-top" class="fixed top-0 w-full bg-gradient-to-b from-black/90 to-transparent z-[60] p-4 flex justify-between items-center transition-transform duration-300">
-                <button onclick="${comicSlug ? `showDetail('${comicSlug}')` : `showHome()`}" class="w-10 h-10 rounded-full bg-black/40 backdrop-blur border border-white/10 flex items-center justify-center hover:bg-amber-500 hover:text-black transition"><i class="fa fa-arrow-left"></i></button>
-                <h2 class="text-xs font-bold truncate max-w-[200px] shadow-black drop-shadow-md">${res.title || chSlug}</h2>
-                <button onclick="toggleFullScreen()" class="w-10 h-10 rounded-full bg-black/40 backdrop-blur border border-white/10 flex items-center justify-center"><i class="fa fa-expand"></i></button>
-            </div>
-
-            <div id="reader-images" class="flex flex-col items-center min-h-screen w-full max-w-3xl mx-auto bg-[#111]" onclick="toggleReaderUI()"></div>
-
-            <div id="reader-bottom" class="fixed bottom-6 left-0 w-full z-[60] px-4 flex justify-center pointer-events-none transition-transform duration-300">
-                <div class="glass p-2 rounded-2xl flex gap-2 items-center shadow-2xl pointer-events-auto bg-black/80 backdrop-blur-xl">
-                    <button onclick="${res.navigation.prev ? `readChapter('${res.navigation.prev}', '${comicSlug}')` : ''}" class="w-10 h-10 rounded-xl flex items-center justify-center ${!res.navigation.prev ? 'opacity-30' : 'hover:bg-amber-500 hover:text-black transition'}"><i class="fa fa-chevron-left"></i></button>
-                    ${dropdownHTML}
-                    <button onclick="${res.navigation.next ? `readChapter('${res.navigation.next}', '${comicSlug}')` : ''}" class="w-10 h-10 rounded-xl amber-gradient text-black flex items-center justify-center ${!res.navigation.next ? 'opacity-30' : 'hover:scale-105 transition'}"><i class="fa fa-chevron-right"></i></button>
+        <div class="relative min-h-screen bg-black -mx-4 -mt-24">
+            <div id="reader-top" class="reader-ui fixed top-0 w-full glass z-[60] p-4 flex justify-between items-center border-b border-white/10">
+                <div class="flex items-center gap-2">
+                    <button onclick="${backAction}" class="p-2 hover:bg-white/10 rounded-full"><i class="fa fa-arrow-left"></i></button>
+                    <div class="flex flex-col">
+                        <h2 class="text-xs font-bold truncate text-amber-500 max-w-[150px] md:max-w-xs">${chSlug.replace(/-/g, ' ')}</h2>
+                        <div class="text-[10px] text-gray-400 flex items-center gap-2">
+                            <span>Gambar: ${res.images.length}</span>
+                            <button onclick="toggleImageQuality()" class="hover:text-amber-500" title="Toggle Quality">
+                                <i class="fas fa-expand-arrows-alt"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="changeReadingMode()" class="p-2 hover:bg-white/10 rounded-full text-white/80" title="Mode Baca">
+                        <i class="fas fa-columns"></i>
+                    </button>
+                    <button onclick="toggleFullScreen()" class="p-2 hover:bg-white/10 rounded-full text-white/80" title="Fullscreen">
+                        <i class="fa fa-expand"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="flex flex-col items-center pt-20 pb-40" onclick="toggleReaderUI()" id="image-container">
+                ${imagesHTML}
+            </div>
+            
+            <div id="reader-bottom" class="reader-ui fixed bottom-6 left-0 w-full z-[60] px-4 flex justify-center pointer-events-none">
+                <div class="glass p-3 rounded-2xl flex gap-2 items-center shadow-2xl border border-white/10 pointer-events-auto">
+                    <button onclick="${res.navigation.prev ? `readChapter('${res.navigation.prev}', '${comicSlug || ''}')` : ''}" 
+                            class="p-3 bg-white/10 rounded-xl ${!res.navigation.prev ? 'opacity-20' : 'hover:bg-amber-500 hover:text-black transition'}"
+                            title="Chapter Sebelumnya">
+                        <i class="fa fa-chevron-left"></i>
+                    </button>
+                    ${dropdownHTML}
+                    <button onclick="${res.navigation.next ? `readChapter('${res.navigation.next}', '${comicSlug || ''}')` : ''}" 
+                            class="p-3 amber-gradient text-black rounded-xl ${!res.navigation.next ? 'opacity-20' : 'hover:scale-105 transition'}"
+                            title="Chapter Berikutnya">
+                        <i class="fa fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="loading-progress" class="fixed top-16 left-0 w-full h-1 bg-gray-800 z-50 hidden">
+                <div class="h-full bg-amber-500 transition-all duration-300" style="width: 0%"></div>
             </div>
         </div>
     `;
-
-    const imgContainer = document.getElementById('reader-images');
-    res.images.forEach(url => {
-        const wrap = document.createElement('div');
-        wrap.className = "w-full relative min-h-[300px] bg-[#1a1a1a]";
-        
-        const skel = document.createElement('div');
-        skel.className = "skeleton absolute inset-0 z-10";
-        
-        const img = new Image();
-        img.src = url;
-        img.className = "comic-page opacity-0 transition-opacity duration-500 relative z-20";
-        img.loading = "lazy";
-        
-        img.onload = () => { skel.remove(); img.classList.remove('opacity-0'); wrap.style.minHeight = 'auto'; };
-        img.onerror = () => { skel.remove(); wrap.innerHTML = `<div class="py-10 text-center text-xs text-gray-500 flex flex-col items-center gap-2"><i class="fa fa-triangle-exclamation text-red-500 text-xl"></i> Gagal Load <button onclick="this.parentElement.parentElement.querySelector('img').src='${url}'" class="bg-white/10 px-3 py-1 rounded">Reload</button></div>`; wrap.appendChild(img); };
-
-        wrap.appendChild(skel);
-        wrap.appendChild(img);
-        imgContainer.appendChild(wrap);
+    
+    // Observe all images for lazy loading
+    setTimeout(() => {
+        document.querySelectorAll('.chapter-image[data-src]').forEach(img => {
+            imageObserver.observe(img);
+        });
+    }, 100);
+    
+    // Update reading progress
+    const progressBar = document.getElementById('loading-progress');
+    progressBar.classList.remove('hidden');
+    
+    let loadedImages = 0;
+    const totalImages = res.images.length;
+    
+    document.querySelectorAll('.chapter-image').forEach(img => {
+        img.onload = () => {
+            loadedImages++;
+            const progress = (loadedImages / totalImages) * 100;
+            progressBar.querySelector('div').style.width = `${progress}%`;
+            
+            if (loadedImages === totalImages) {
+                setTimeout(() => {
+                    progressBar.classList.add('hidden');
+                }, 500);
+            }
+        };
     });
     
-    if(comicSlug) saveHistory(comicSlug, null, null, chSlug, res.title);
+    if(comicSlug) saveHistory(comicSlug, null, null, chSlug, chSlug.replace(/-/g, ' '));
     window.scrollTo(0,0);
+}
+
+function toggleImageQuality() {
+    const images = document.querySelectorAll('.chapter-image');
+    images.forEach(img => {
+        const currentSrc = img.src;
+        if (currentSrc.includes('quality=high')) {
+            img.src = currentSrc.replace('quality=high', 'quality=low');
+        } else if (currentSrc.includes('quality=low')) {
+            img.src = currentSrc.replace('quality=low', 'quality=high');
+        }
+    });
+}
+
+function changeReadingMode() {
+    const container = document.getElementById('image-container');
+    container.classList.toggle('grid');
+    container.classList.toggle('grid-cols-1');
+    container.classList.toggle('grid-cols-2');
+    container.classList.toggle('gap-4');
 }
 
 function toggleReaderUI() {
@@ -559,52 +611,89 @@ function toggleReaderUI() {
     document.getElementById('reader-bottom').classList.toggle('ui-hidden-bottom');
 }
 
-// --- History & Bookmarks ---
 function handleSearch(e) { if(e.key === 'Enter') applyAdvancedFilter(); }
+
 function saveHistory(slug, title, image, chSlug, chTitle) {
-    let h = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-    h = h.filter(x => x.slug !== slug);
-    h.unshift({ slug, title, image, lastChapterSlug: chSlug, lastChapterTitle: chTitle });
-    if(h.length > 50) h.pop();
-    localStorage.setItem('fmc_history', JSON.stringify(h));
+    let history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
+    let existing = history.find(h => h.slug === slug);
+    const data = {
+        slug, title: title || existing?.title, image: image || existing?.image,
+        lastChapterSlug: chSlug || existing?.lastChapterSlug, lastChapterTitle: chTitle || existing?.lastChapterTitle,
+        lastRead: new Date().toISOString()
+    };
+    history = history.filter(h => h.slug !== slug);
+    history.unshift(data);
+    if (history.length > 30) history.pop();
+    localStorage.setItem('fmc_history', JSON.stringify(history));
 }
+
 function showHistory() {
-    updateURL('/history'); resetNavs();
-    renderGrid({ data: JSON.parse(localStorage.getItem('fmc_history')||'[]') }, "Riwayat Baca", null);
+    let history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
+    renderGrid({ data: history }, "Riwayat Baca", null);
 }
+
 function toggleBookmark(slug, title, image) {
-    let b = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
-    const i = b.findIndex(x => x.slug === slug);
-    if(i > -1) b.splice(i, 1); else b.push({ slug, title, image });
-    localStorage.setItem('fmc_bookmarks', JSON.stringify(b));
+    let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
+    const idx = bookmarks.findIndex(b => b.slug === slug);
+    if (idx > -1) {
+        bookmarks.splice(idx, 1);
+    } else {
+        bookmarks.push({ slug, title, image, added: new Date().toISOString() });
+    }
+    localStorage.setItem('fmc_bookmarks', JSON.stringify(bookmarks));
     checkBookmarkStatus(slug);
 }
+
 function checkBookmarkStatus(slug) {
+    let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
     const btn = document.getElementById('btn-bookmark');
-    if(!btn) return;
-    const exists = JSON.parse(localStorage.getItem('fmc_bookmarks')||'[]').some(x => x.slug === slug);
-    btn.innerHTML = exists ? `<i class="fa fa-check text-amber-500"></i> Tersimpan` : `<i class="fa fa-bookmark"></i> Simpan`;
-    if(exists) { btn.classList.add('border-amber-500/50', 'bg-amber-500/10'); btn.classList.remove('glass'); }
-    else { btn.classList.remove('border-amber-500/50', 'bg-amber-500/10'); btn.classList.add('glass'); }
+    if (btn && bookmarks.some(b => b.slug === slug)) {
+        btn.innerHTML = `<i class="fa fa-check text-amber-500"></i> Tersimpan`;
+        btn.classList.add('border-amber-500');
+    } else if (btn) {
+        btn.innerHTML = `<i class="fa fa-bookmark"></i> Simpan Koleksi`;
+        btn.classList.remove('border-amber-500');
+    }
 }
+
 function showBookmarks() {
-    updateURL('/bookmarks'); resetNavs();
-    renderGrid({ data: JSON.parse(localStorage.getItem('fmc_bookmarks')||'[]') }, "Koleksi Favorit", null);
+    let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
+    renderGrid({ data: bookmarks }, "Koleksi Favorit", null);
 }
 
-// --- Init ---
 async function handleInitialLoad() {
-    const p = window.location.pathname;
-    resetNavs();
-    if(p === '/404.html') return;
-    if(p.startsWith('/series/')) showDetail(p.split('/')[2], false);
-    else if(p.startsWith('/chapter/')) readChapter(p.split('/')[2], null, false);
-    else if(p === '/ongoing') showOngoing(1);
-    else if(p === '/completed') showCompleted(1);
-    else if(p === '/history') showHistory();
-    else if(p === '/bookmarks') showBookmarks();
-    else showHome(false);
+    const path = window.location.pathname;
+    resetNavs(); 
+
+    if (path === '/404.html') return;
+
+    if (path.startsWith('/series/')) {
+        const uuid = path.split('/')[2];
+        if (uuid) showDetail(uuid, false);
+        else showHome(false);
+    } 
+    else if (path.startsWith('/chapter/')) {
+        const uuid = path.split('/')[2];
+        if (uuid) readChapter(uuid, null, false); 
+        else showHome(false);
+    } 
+    else if (path === '/ongoing') {
+        showOngoing(1);
+    }
+    else if (path === '/completed') {
+        showCompleted(1);
+    }
+    else {
+        showHome(false);
+    }
 }
 
-window.addEventListener('popstate', handleInitialLoad);
-document.addEventListener('DOMContentLoaded', () => { loadGenres(); handleInitialLoad(); });
+window.addEventListener('popstate', () => handleInitialLoad());
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadGenres();
+    handleInitialLoad();
+    
+    // Initialize Intersection Observer
+    initImageObserver();
+});
