@@ -301,6 +301,10 @@ async function showDetail(idOrSlug, push = true) {
         </div>
     `;
 
+    // Logic Sinopsis: Cek apakah panjang teks > 250 karakter
+    const synopsisText = res.synopsis || "Sinopsis tidak tersedia.";
+    const isLongSynopsis = synopsisText.length > 250;
+
     contentArea.innerHTML = `
         ${backdropHTML}
         
@@ -343,11 +347,17 @@ async function showDetail(idOrSlug, push = true) {
                     ${res.genres ? res.genres.map(g => `<span onclick="showGenre('${g.slug}')" class="cursor-pointer hover:text-amber-500 transition text-gray-400 text-xs px-3 py-1 rounded-full border border-white/10 hover:border-amber-500/50 bg-white/5">${g.title}</span>`).join('') : ''}
                 </div>
 
+                <!-- Bagian Sinopsis dengan Toggle -->
                 <div class="bg-white/5 rounded-2xl p-5 md:p-6 mb-8 border border-white/5 backdrop-blur-sm">
                     <h3 class="font-bold text-sm mb-2 text-amber-500 uppercase tracking-wide">Sinopsis</h3>
-                    <p class="text-gray-300 text-sm leading-relaxed text-justify line-clamp-6 hover:line-clamp-none transition-all cursor-pointer">
-                        ${res.synopsis || "Sinopsis tidak tersedia."}
+                    <p id="synopsis-text" class="text-gray-300 text-sm leading-relaxed text-justify ${isLongSynopsis ? 'line-clamp-4' : ''} transition-all duration-300">
+                        ${synopsisText}
                     </p>
+                    ${isLongSynopsis ? `
+                        <button onclick="toggleSynopsis()" id="synopsis-btn" class="text-amber-500 text-xs font-bold mt-2 hover:text-white transition flex items-center gap-1">
+                            Baca Selengkapnya <i class="fa fa-chevron-down"></i>
+                        </button>
+                    ` : ''}
                 </div>
 
                 <!-- Chapter List Section -->
@@ -376,6 +386,20 @@ async function showDetail(idOrSlug, push = true) {
     checkBookmarkStatus(slug);
     saveHistory(slug, res.title, res.image);
     window.scrollTo(0,0);
+}
+
+// Fungsi Baru: Toggle Sinopsis
+function toggleSynopsis() {
+    const txt = document.getElementById('synopsis-text');
+    const btn = document.getElementById('synopsis-btn');
+    
+    if (txt.classList.contains('line-clamp-4')) {
+        txt.classList.remove('line-clamp-4');
+        btn.innerHTML = `Tutup <i class="fa fa-chevron-up"></i>`;
+    } else {
+        txt.classList.add('line-clamp-4');
+        btn.innerHTML = `Baca Selengkapnya <i class="fa fa-chevron-down"></i>`;
+    }
 }
 
 function renderChapterList(chapters, comicSlug) {
@@ -431,9 +455,6 @@ function filterChapters() {
 async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     let chSlug = chIdOrSlug;
 
-    // FIX #1: Removed the blocking loading screen (contentArea.innerHTML = ...)
-    // Images will load directly into the reader skeleton below.
-    
     if (chIdOrSlug.length === 36) {
         const mapping = await getSlugFromUuid(chIdOrSlug);
         if (mapping) chSlug = mapping.slug;
@@ -453,15 +474,11 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
 
     const res = data.data;
 
-    // FIX #2 & #3: Detect Series Info if missing (Direct Link / Refresh Case)
     let finalComicSlug = comicSlug;
     if (!finalComicSlug) {
-        // Try to guess from response data if available
         if (res.parent_slug) finalComicSlug = res.parent_slug;
         else if (res.comic_slug) finalComicSlug = res.comic_slug;
         else if (res.relation && res.relation.slug) finalComicSlug = res.relation.slug;
-        // Fallback: If your API doesn't provide the parent slug in chapter detail,
-        // you might need to rely on parsing logic or just wait for the user to visit home.
     }
 
     const backAction = finalComicSlug ? `showDetail('${finalComicSlug}')` : `showHome()`;
@@ -471,7 +488,6 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     if (currentChapterList && currentChapterList.length > 0) {
         dropdownHTML = generateDropdownHTML(currentChapterList, chSlug, finalComicSlug);
     } else {
-        // Placeholder for when we fetch the list in background
         dropdownHTML = `<div id="dropdown-placeholder" class="w-32"></div>`;
     }
 
@@ -559,13 +575,10 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
         imageContainer.appendChild(wrapper);
     });
 
-    // FIX #3: Save History (Handle missing slug)
-    // If we have finalComicSlug, we save it. If not, we still try to save partial info.
     if(finalComicSlug) {
         saveHistory(finalComicSlug, null, null, chSlug, res.title || chSlug.replace(/-/g, ' '));
     }
 
-    // FIX #2: If dropdown list is missing (Direct Link/Refresh), fetch it now!
     if ((!currentChapterList || currentChapterList.length === 0) && finalComicSlug) {
         fetchAndPopulateDropdown(finalComicSlug, chSlug);
     }
@@ -594,7 +607,6 @@ async function fetchAndPopulateDropdown(comicSlug, currentChapterSlug) {
         if (container) {
             container.innerHTML = generateDropdownHTML(currentChapterList, currentChapterSlug, comicSlug);
         }
-        // Also update history with full metadata since we have it now
         saveHistory(comicSlug, data.data.title, data.data.image, currentChapterSlug);
     }
 }
