@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -8,30 +7,26 @@
     <title>FmcComic - Ultimate Reader Pro</title>
     
     <link rel="icon" href="assets/icon.png" type="image/jpeg">
-
+    <!-- Supabase Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- Tailwind & Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="overflow-x-hidden bg-[#0b0b0f] text-gray-200">
 
-    <!-- Progress Bar Reading -->
     <div id="progress-bar" style="width: 0%"></div>
 
-    <!-- Navbar Desktop -->
+    <!-- Navbar -->
     <nav id="main-nav" class="fixed top-0 w-full z-50 glass border-b border-white/5 transition-transform duration-300">
         <div class="container mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-8">
                 <div class="flex items-center gap-3 cursor-pointer group" onclick="showHome()">
-                    <img src="assets/icon.png" onerror="this.src='https://via.placeholder.com/40'" class="w-9 h-9 rounded-xl object-cover border border-amber-500/50 shadow-lg shadow-amber-500/20 group-hover:scale-105 transition">
-                    <h1 class="text-2xl font-extrabold text-amber-500 tracking-tight">
-                        Fmc<span class="text-white">Comic</span>
-                    </h1>
+                    <img src="assets/icon.png" class="w-9 h-9 rounded-xl object-cover border border-amber-500/50 shadow-lg shadow-amber-500/20 group-hover:scale-105 transition">
+                    <h1 class="text-2xl font-extrabold text-amber-500 tracking-tight">Fmc<span class="text-white">Comic</span></h1>
                 </div>
-
                 <div class="hidden md:flex gap-6 text-sm font-medium">
                     <button onclick="showHome()" class="hover:text-amber-500 transition">Beranda</button>
                     <button onclick="showOngoing()" class="hover:text-amber-500 transition">Ongoing</button>
@@ -46,51 +41,51 @@
     </nav>
 
     <!-- Filter Panel -->
-    <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4 shadow-2xl">
-        <div class="container mx-auto">
-            <div class="flex flex-col gap-4 max-w-4xl mx-auto">
-                <div class="relative w-full">
-                    <i class="fa fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                    <input type="text" id="search-input" onkeyup="handleSearch(event)" placeholder="Cari judul komik..." 
-                        class="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500 transition text-white placeholder-gray-500">
-                </div>
-                
-                <div class="flex flex-wrap gap-2 justify-between items-center">
-                    <div class="flex flex-wrap gap-2 flex-1">
-                        <select id="filter-genre" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300">
-                            <option value="">Pilih Genre</option>
-                        </select>
-                        <select id="filter-type" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300">
-                            <option value="">Semua Tipe</option>
-                            <option value="manga">Manga</option>
-                            <option value="manhwa">Manhwa</option>
-                            <option value="manhua">Manhua</option>
-                        </select>
-                        <select id="filter-status" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-amber-500 text-xs text-gray-300">
-                            <option value="">Semua Status</option>
-                            <option value="ongoing">Ongoing</option>
-                            <option value="completed">Completed</option>
-                        </select>
-                    </div>
-                    <button onclick="applyAdvancedFilter()" class="amber-gradient px-6 py-2 rounded-lg font-bold text-black text-xs hover:opacity-90 transition w-full md:w-auto mt-2 md:mt-0 shadow-lg shadow-amber-500/20">
-                        Cari Komik
-                    </button>
-                </div>
+    <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4">
+        <div class="container mx-auto max-w-4xl">
+            <input type="text" id="search-input" onkeyup="handleSearch(event)" placeholder="Cari judul komik..." class="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500 text-white">
+            <div class="flex flex-wrap gap-2 mt-4">
+                <select id="filter-genre" class="bg-zinc-900 border border-white/10 rounded-lg px-4 py-2 text-xs text-gray-300"><option value="">Genre</option></select>
+                <button onclick="applyAdvancedFilter()" class="amber-gradient px-6 py-2 rounded-lg font-bold text-black text-xs">Cari</button>
             </div>
         </div>
     </div>
 
     <!-- Main Content -->
     <main class="container mx-auto mt-24 px-4 pb-32 min-h-screen">
+        <!-- Auth Panel Hybrid History -->
+        <div id="auth-panel" class="max-w-4xl mx-auto mb-8 animate-fade-in">
+            <div class="glass rounded-2xl p-4 border border-amber-500/20 flex flex-col md:flex-row items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div id="user-avatar" class="w-12 h-12 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center overflow-hidden">
+                        <i class="fa fa-user text-xl text-gray-600"></i>
+                    </div>
+                    <div>
+                        <h4 id="auth-user-name" class="font-bold text-sm text-white">Mode: Local Storage</h4>
+                        <p id="auth-desc" class="text-[10px] text-gray-400 leading-tight">
+                            <i class="fa fa-circle text-orange-500 mr-1 animate-pulse"></i> 
+                            Offline. Riwayat bisa hilang jika hapus cache/ganti browser.
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 w-full md:w-auto">
+                    <button id="btn-login-google" onclick="loginGoogle()" class="flex-1 md:flex-none px-5 py-2.5 bg-white text-black rounded-xl font-bold text-xs hover:bg-gray-200 transition flex items-center justify-center gap-2">
+                        <i class="fab fa-google"></i> Login Cloud
+                    </button>
+                    <button id="btn-logout" onclick="logout()" class="hidden px-5 py-2.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl font-bold text-xs hover:bg-red-500 hover:text-white transition">Keluar</button>
+                </div>
+            </div>
+        </div>
+
         <div id="content-area"></div>
     </main>
 
     <!-- Mobile Nav -->
     <div id="mobile-nav" class="fixed bottom-0 w-full glass border-t border-white/5 flex justify-around p-3 md:hidden z-50 transition-transform duration-300 pb-safe">
-        <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16"><i class="fa fa-home text-lg"></i><span class="text-[10px]">Home</span></button>
-        <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16"><i class="fa fa-fire text-lg text-orange-500"></i><span class="text-[10px]">Hot</span></button>
-        <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16"><i class="fa fa-check-circle text-lg text-green-500"></i><span class="text-[10px]">Tamat</span></button>
-        <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16"><i class="fa fa-history text-lg"></i><span class="text-[10px]">Riwayat</span></button>
+        <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 w-16"><i class="fa fa-home text-lg"></i><span class="text-[10px]">Home</span></button>
+        <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 w-16"><i class="fa fa-fire text-lg text-orange-500"></i><span class="text-[10px]">Hot</span></button>
+        <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 w-16"><i class="fa fa-check-circle text-lg text-green-500"></i><span class="text-[10px]">Tamat</span></button>
+        <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 w-16"><i class="fa fa-history text-lg"></i><span class="text-[10px]">Riwayat</span></button>
     </div>
 
     <script src="script.js"></script>
