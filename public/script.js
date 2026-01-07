@@ -1,4 +1,4 @@
-/* script.js - Updated 2026 for High Performance */
+/* script.js - Updated 2026 for High Performance & User Fixes */
 
 const API_PROXY = "https://api.nekolabs.web.id/px?url=";
 const API_BASE = "https://www.sankavollerei.com/comic/komikcast";
@@ -48,7 +48,6 @@ function getTypeClass(type) {
 }
 
 function redirectTo404() {
-    // window.location.href = '/404.html'; // Uncomment if you have 404 page
     contentArea.innerHTML = `<div class="text-center py-40 text-red-500">Error 404: Halaman tidak ditemukan.</div>`;
 }
 
@@ -260,7 +259,7 @@ function renderGrid(data, title, funcName, extraArg = null) {
     window.scrollTo(0,0);
 }
 
-// --- Detail Page Logic (REMASTERED) ---
+// --- Detail Page Logic ---
 
 async function showDetail(idOrSlug, push = true) {
     let slug = idOrSlug;
@@ -427,22 +426,14 @@ function filterChapters() {
     }
 }
 
-// --- Reader Logic (REMASTERED FOR PERFORMANCE) ---
+// --- Reader Logic (FIXED: No Loading Screen, Persistent Dropdown, History) ---
 
 async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     let chSlug = chIdOrSlug;
-    
-    // UI Loading State (Full Screen)
-    contentArea.innerHTML = `
-        <div class="flex flex-col items-center justify-center min-h-[80vh] gap-4">
-            <div class="relative">
-                <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-amber-500"></div>
-                <div class="absolute inset-0 flex items-center justify-center font-bold text-[10px] text-amber-500">Fmc</div>
-            </div>
-            <p class="text-xs text-gray-500 animate-pulse font-mono">Memuat gambar...</p>
-        </div>
-    `;
 
+    // FIX #1: Removed the blocking loading screen (contentArea.innerHTML = ...)
+    // Images will load directly into the reader skeleton below.
+    
     if (chIdOrSlug.length === 36) {
         const mapping = await getSlugFromUuid(chIdOrSlug);
         if (mapping) chSlug = mapping.slug;
@@ -461,26 +452,34 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     if(!data || !data.data) { redirectTo404(); return; }
 
     const res = data.data;
-    const backAction = comicSlug ? `showDetail('${comicSlug}')` : `showHome()`;
 
-    // Dropdown Navigation
+    // FIX #2 & #3: Detect Series Info if missing (Direct Link / Refresh Case)
+    let finalComicSlug = comicSlug;
+    if (!finalComicSlug) {
+        // Try to guess from response data if available
+        if (res.parent_slug) finalComicSlug = res.parent_slug;
+        else if (res.comic_slug) finalComicSlug = res.comic_slug;
+        else if (res.relation && res.relation.slug) finalComicSlug = res.relation.slug;
+        // Fallback: If your API doesn't provide the parent slug in chapter detail,
+        // you might need to rely on parsing logic or just wait for the user to visit home.
+    }
+
+    const backAction = finalComicSlug ? `showDetail('${finalComicSlug}')` : `showHome()`;
+
+    // Dropdown Logic (Initial Render)
     let dropdownHTML = '';
     if (currentChapterList && currentChapterList.length > 0) {
-        dropdownHTML = `
-            <div class="relative group mx-2">
-                <select onchange="readChapter(this.value, '${comicSlug}')" class="appearance-none bg-black/50 backdrop-blur text-white border border-white/10 rounded-xl text-xs py-2.5 pl-3 pr-8 focus:outline-none focus:border-amber-500 cursor-pointer hover:bg-white/10 transition w-32 md:w-auto truncate">
-                    ${currentChapterList.map(ch => `<option value="${ch.slug}" ${ch.slug === chSlug ? 'selected' : ''}>${ch.title}</option>`).join('')}
-                </select>
-                <i class="fa fa-chevron-up absolute right-3 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none text-gray-400"></i>
-            </div>
-        `;
+        dropdownHTML = generateDropdownHTML(currentChapterList, chSlug, finalComicSlug);
+    } else {
+        // Placeholder for when we fetch the list in background
+        dropdownHTML = `<div id="dropdown-placeholder" class="w-32"></div>`;
     }
 
     // Main Reader Structure
     contentArea.innerHTML = `
         <div class="relative min-h-screen bg-[#0b0b0f] -mx-4 -mt-24">
             
-            <!-- Top Bar (Floating) -->
+            <!-- Top Bar -->
             <div id="reader-top" class="reader-ui fixed top-0 w-full bg-gradient-to-b from-black/90 to-transparent z-[60] p-4 flex justify-between items-center transition-all duration-300">
                 <div class="flex items-center gap-3">
                     <button onclick="${backAction}" class="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-amber-500 hover:text-black hover:border-amber-500 transition text-white">
@@ -501,17 +500,19 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
                 <!-- Images Injected Here -->
             </div>
 
-            <!-- Bottom Bar (Floating) -->
+            <!-- Bottom Bar -->
             <div id="reader-bottom" class="reader-ui fixed bottom-6 left-0 w-full z-[60] px-4 flex justify-center pointer-events-none transition-all duration-300">
                 <div class="glass p-2 rounded-2xl flex gap-1 items-center shadow-2xl border border-white/10 pointer-events-auto bg-black/80 backdrop-blur-xl">
-                    <button onclick="${res.navigation.prev ? `readChapter('${res.navigation.prev}', '${comicSlug || ''}')` : ''}" 
+                    <button onclick="${res.navigation.prev ? `readChapter('${res.navigation.prev}', '${finalComicSlug || ''}')` : ''}" 
                         class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation.prev ? 'opacity-30 cursor-not-allowed text-gray-500' : 'hover:bg-amber-500 hover:text-black transition text-white'}">
                         <i class="fa fa-chevron-left"></i>
                     </button>
                     
-                    ${dropdownHTML}
+                    <div id="chapter-dropdown-container">
+                        ${dropdownHTML}
+                    </div>
 
-                    <button onclick="${res.navigation.next ? `readChapter('${res.navigation.next}', '${comicSlug || ''}')` : ''}" 
+                    <button onclick="${res.navigation.next ? `readChapter('${res.navigation.next}', '${finalComicSlug || ''}')` : ''}" 
                         class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation.next ? 'opacity-30 cursor-not-allowed text-gray-500' : 'amber-gradient text-black hover:scale-105 transition shadow-lg shadow-amber-500/20'}">
                         <i class="fa fa-chevron-right"></i>
                     </button>
@@ -520,24 +521,19 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
         </div>
     `;
 
-    // High Performance Image Loader (Skeleton -> Image)
+    // Render Images with Skeleton
     const imageContainer = document.getElementById('reader-images');
-    
     res.images.forEach((imgUrl) => {
-        // Wrapper untuk menahan layout
         const wrapper = document.createElement('div');
         wrapper.className = "w-full relative min-h-[400px] bg-[#1a1a1a]"; 
 
-        // Skeleton Element
         const skeleton = document.createElement('div');
         skeleton.className = "skeleton absolute inset-0 w-full h-full z-10";
 
-        // Image Element
         const img = new Image();
         img.src = imgUrl; 
         img.className = "comic-page opacity-0 transition-opacity duration-500 relative z-20"; 
-        img.alt = "Page";
-        img.loading = "lazy"; // Native lazy load
+        img.loading = "lazy";
 
         img.onload = () => {
             skeleton.remove();
@@ -555,7 +551,7 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
                     <button onclick="this.parentElement.parentElement.querySelector('img').src='${imgUrl}'" class="text-[10px] bg-white/10 px-4 py-2 rounded hover:bg-white/20 mt-1">Coba Lagi</button>
                 </div>
             `;
-            wrapper.appendChild(img); // Tetap append hidden img untuk referensi reload
+            wrapper.appendChild(img);
         };
 
         wrapper.appendChild(skeleton);
@@ -563,8 +559,44 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
         imageContainer.appendChild(wrapper);
     });
 
-    if(comicSlug) saveHistory(comicSlug, null, null, chSlug, res.title || chSlug.replace(/-/g, ' '));
+    // FIX #3: Save History (Handle missing slug)
+    // If we have finalComicSlug, we save it. If not, we still try to save partial info.
+    if(finalComicSlug) {
+        saveHistory(finalComicSlug, null, null, chSlug, res.title || chSlug.replace(/-/g, ' '));
+    }
+
+    // FIX #2: If dropdown list is missing (Direct Link/Refresh), fetch it now!
+    if ((!currentChapterList || currentChapterList.length === 0) && finalComicSlug) {
+        fetchAndPopulateDropdown(finalComicSlug, chSlug);
+    }
+    
     window.scrollTo(0,0);
+}
+
+// New Helper for Dropdown Logic
+function generateDropdownHTML(list, currentSlug, comicSlug) {
+    return `
+        <div class="relative group mx-2">
+            <select onchange="readChapter(this.value, '${comicSlug}')" class="appearance-none bg-black/50 backdrop-blur text-white border border-white/10 rounded-xl text-xs py-2.5 pl-3 pr-8 focus:outline-none focus:border-amber-500 cursor-pointer hover:bg-white/10 transition w-32 md:w-auto truncate">
+                ${list.map(ch => `<option value="${ch.slug}" ${ch.slug === currentSlug ? 'selected' : ''}>${ch.title}</option>`).join('')}
+            </select>
+            <i class="fa fa-chevron-up absolute right-3 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none text-gray-400"></i>
+        </div>
+    `;
+}
+
+// Background fetch to restore Dropdown on refresh
+async function fetchAndPopulateDropdown(comicSlug, currentChapterSlug) {
+    const data = await fetchAPI(`${API_BASE}/detail/${comicSlug}`);
+    if (data && data.data) {
+        currentChapterList = data.data.chapters;
+        const container = document.getElementById('chapter-dropdown-container');
+        if (container) {
+            container.innerHTML = generateDropdownHTML(currentChapterList, currentChapterSlug, comicSlug);
+        }
+        // Also update history with full metadata since we have it now
+        saveHistory(comicSlug, data.data.title, data.data.image, currentChapterSlug);
+    }
 }
 
 function toggleReaderUI() {
@@ -581,10 +613,10 @@ function saveHistory(slug, title, image, chSlug, chTitle) {
     let existing = history.find(h => h.slug === slug);
     const data = {
         slug, 
-        title: title || existing?.title, 
-        image: image || existing?.image,
+        title: title || existing?.title || 'Unknown Title', 
+        image: image || existing?.image || 'assets/icon.png',
         lastChapterSlug: chSlug || existing?.lastChapterSlug, 
-        lastChapterTitle: chTitle || existing?.lastChapterTitle,
+        lastChapterTitle: chTitle || existing?.lastChapterTitle || 'Chapter ?',
         timestamp: new Date().getTime()
     };
     history = history.filter(h => h.slug !== slug);
