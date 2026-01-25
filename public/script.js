@@ -1,9 +1,9 @@
 /*
-  FmcComic - improved reader UX (final)
-  - Fix klik chapter harus beberapa kali (navigation lock + feedback)
-  - Fix next/prev kadang ngadat (anti double click + lock)
-  - Header reader 1 baris: "Judul Komik - Chapter 1"
-  - Progress bar reading
+  FmcComic - Upgraded Version
+  - Added: "Continue Reading" History on Home
+  - Added: Live Search (Debounce)
+  - Added: Toast Notifications (No more alerts)
+  - Added: Scroll To Top logic
 */
 
 const API_PROXY = "https://api.nekolabs.web.id/px?url=";
@@ -15,12 +15,54 @@ const filterPanel = document.getElementById('filter-panel');
 const mainNav = document.getElementById('main-nav');
 const mobileNav = document.getElementById('mobile-nav');
 const progressBar = document.getElementById('progress-bar');
+const scrollTopBtn = document.getElementById('scroll-top');
 
 let currentChapterList = [];
 let currentComicContext = { slug: null, title: null, image: null };
 let isNavigating = false;
+let searchTimeout = null; // For debounce
 
-/* ---------------- Helpers ---------------- */
+/* ---------------- Toast & UX Helpers ---------------- */
+
+// NEW: Beautiful Toast Notifications
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  
+  let icon = 'fa-info-circle';
+  let colorClass = 'border-amber-500 text-white';
+  
+  if(type === 'error') { icon = 'fa-triangle-exclamation'; colorClass = 'border-red-500 text-red-100 bg-red-900/80'; }
+  else if(type === 'success') { icon = 'fa-check-circle'; colorClass = 'border-green-500 text-green-100 bg-green-900/80'; }
+  else { colorClass = 'border-amber-500 text-white bg-[#1a1a1f]'; }
+
+  toast.className = `toast-enter pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl border-l-4 shadow-xl backdrop-blur-md min-w-[280px] ${colorClass}`;
+  toast.innerHTML = `
+    <i class="fa ${icon} text-lg"></i>
+    <span class="text-sm font-medium">${message}</span>
+  `;
+
+  container.appendChild(toast);
+
+  // Auto remove after 3s
+  setTimeout(() => {
+    toast.classList.remove('toast-enter');
+    toast.classList.add('toast-exit');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// Global Scroll Handler
+window.onscroll = function() {
+  // Show/Hide ScrollTop Button
+  if (document.body.scrollTop > 300 || document.documentElement.scrollTop > 300) {
+    scrollTopBtn.classList.add('show-scroll');
+  } else {
+    scrollTopBtn.classList.remove('show-scroll');
+  }
+};
+
+/* ---------------- Core Functions ---------------- */
 
 async function getUuidFromSlug(slug, type) {
   try {
@@ -60,7 +102,10 @@ function getTypeClass(type) {
 }
 
 function redirectTo404() {
-  contentArea.innerHTML = `<div class="text-center py-40 text-red-500">Error 404: Halaman tidak ditemukan.</div>`;
+  contentArea.innerHTML = `<div class="text-center py-40 text-red-500 flex flex-col gap-2 justify-center items-center">
+    <i class="fa fa-bug text-4xl"></i>
+    <p>Halaman tidak ditemukan.</p>
+  </div>`;
 }
 
 async function fetchAPI(url) {
@@ -68,16 +113,40 @@ async function fetchAPI(url) {
     const response = await fetch(API_PROXY + encodeURIComponent(url));
     const data = await response.json();
     if (data.success) return data.result?.content || data.result || data;
+    showToast('Gagal memuat data server', 'error');
     return null;
   } catch (e) {
+    console.error(e);
     return null;
   }
+}
+
+// NEW: Live Search / Debounce
+function handleSearchInput(e) {
+  const query = e.target.value;
+  
+  clearTimeout(searchTimeout);
+  
+  if (e.key === 'Enter') {
+    applyAdvancedFilter();
+    return;
+  }
+
+  // Auto search after 800ms typing stop
+  searchTimeout = setTimeout(() => {
+    if (query.length >= 3) {
+      applyAdvancedFilter();
+    }
+  }, 800);
 }
 
 function toggleFilter() {
   filterPanel.classList.toggle('hidden');
   const genreSelect = document.getElementById('filter-genre');
   if (genreSelect && genreSelect.options.length <= 1) loadGenres();
+  if(!filterPanel.classList.contains('hidden')) {
+     document.getElementById('search-input').focus();
+  }
 }
 
 function resetNavs() {
@@ -96,35 +165,23 @@ function toggleFullScreen() {
 
 function setLoading() {
   contentArea.innerHTML = `
-    <div class="flex justify-center py-40">
-      <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-amber-500"></div>
+    <div class="flex flex-col items-center justify-center py-40 gap-4">
+      <div class="animate-spin rounded-full h-10 w-10 border-t-2 border-amber-500"></div>
+      <p class="text-xs text-gray-500 animate-pulse">Memuat data...</p>
     </div>`;
 }
 
-function lockNav() {
-  isNavigating = true;
-  setProgress(0);
-}
+function lockNav() { isNavigating = true; setProgress(0); }
+function unlockNav() { isNavigating = false; }
+function setProgress(percent) { if(progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`; }
 
-function unlockNav() {
-  isNavigating = false;
-}
-
-function setProgress(percent) {
-  if (!progressBar) return;
-  const p = Math.max(0, Math.min(100, percent));
-  progressBar.style.width = `${p}%`;
-}
-
-/* progress reader: berdasarkan scroll */
 function bindReaderProgress() {
   const onScroll = () => {
     const doc = document.documentElement;
     const scrollTop = doc.scrollTop || document.body.scrollTop;
     const scrollHeight = doc.scrollHeight - doc.clientHeight;
     if (scrollHeight <= 0) return setProgress(0);
-    const percent = (scrollTop / scrollHeight) * 100;
-    setProgress(percent);
+    setProgress((scrollTop / scrollHeight) * 100);
   };
   window.removeEventListener('scroll', onScroll);
   window.addEventListener('scroll', onScroll, { passive: true });
@@ -153,11 +210,44 @@ async function showHome(push = true) {
   resetNavs();
   setLoading();
 
+  // Load history from local
+  const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
+  
   const data = await fetchAPI(`${API_BASE}/home`);
   if (!data || !data.data) { redirectTo404(); return; }
 
+  // Build History Section if exists
+  let historySection = '';
+  if (history.length > 0) {
+    const recent = history.slice(0, 10);
+    historySection = `
+    <section class="mb-10 animate-fade-in">
+       <h2 class="text-xl font-bold flex items-center gap-2 mb-4">
+          <i class="fa fa-history text-amber-500"></i> Lanjut Baca
+       </h2>
+       <div class="flex overflow-x-auto gap-3 hide-scroll pb-2 -mx-4 px-4 md:mx-0 md:px-0">
+         ${recent.map(item => `
+            <div onclick="readChapter('${item.lastChapterSlug}', '${item.slug}')" 
+                 class="min-w-[240px] flex gap-3 p-3 bg-white/5 rounded-xl border border-white/5 hover:border-amber-500/50 cursor-pointer hover:bg-white/10 transition group">
+              <img src="${item.image}" onerror="this.src='assets/icon.png'" class="w-12 h-16 object-cover rounded-lg bg-gray-800 shadow-md">
+              <div class="flex flex-col justify-center min-w-0">
+                 <h3 class="text-xs font-bold truncate text-white mb-1 group-hover:text-amber-500 transition">${item.title}</h3>
+                 <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-black bg-amber-500 px-2 py-0.5 rounded font-bold truncate max-w-[120px]">
+                      ${item.lastChapterTitle || 'Lanjut'}
+                    </span>
+                 </div>
+              </div>
+            </div>
+         `).join('')}
+       </div>
+    </section>`;
+  }
+
   contentArea.innerHTML = `
-    <section class="mb-12">
+    ${historySection}
+    
+    <section class="mb-12 animate-fade-in" style="animation-delay: 0.1s">
       <div class="flex items-center justify-between mb-6">
         <h2 class="text-xl font-bold flex items-center gap-2">
           <i class="fa fa-fire text-amber-500"></i> Populer Hari Ini
@@ -165,36 +255,36 @@ async function showHome(push = true) {
       </div>
       <div class="flex overflow-x-auto gap-4 hide-scroll pb-4 -mx-4 px-4 md:mx-0 md:px-0">
         ${data.data.hotUpdates.map(item => `
-          <div class="min-w-[150px] md:min-w-[200px] cursor-pointer card-hover relative rounded-2xl overflow-hidden group"
+          <div class="min-w-[140px] md:min-w-[180px] cursor-pointer card-hover relative rounded-2xl overflow-hidden group"
               onclick="showDetail('${item.slug}')">
             <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent z-10"></div>
             <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Hot'}</span>
-            <img src="${item.image}" class="h-64 md:h-80 w-full object-cover transform group-hover:scale-110 transition duration-500">
+            <img src="${item.image}" loading="lazy" class="h-56 md:h-72 w-full object-cover transform group-hover:scale-110 transition duration-500">
             <div class="absolute bottom-0 left-0 p-3 z-20 w-full">
-              <h3 class="text-sm font-bold truncate text-white drop-shadow-md">${item.title}</h3>
-              <p class="text-amber-400 text-xs font-semibold mt-1">${item.chapter || item.latestChapter}</p>
+              <h3 class="text-xs md:text-sm font-bold truncate text-white drop-shadow-md group-hover:text-amber-400 transition">${item.title}</h3>
+              <p class="text-amber-400 text-[10px] font-semibold mt-1">${item.chapter || item.latestChapter}</p>
             </div>
           </div>
         `).join('')}
       </div>
     </section>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-10 animate-fade-in" style="animation-delay: 0.2s">
       <div class="lg:col-span-2">
         <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Rilis Terbaru</h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-4">
           ${data.data.latestReleases.slice(0, 15).map(item => `
             <div class="bg-zinc-900/40 border border-white/5 rounded-xl overflow-hidden cursor-pointer hover:border-amber-500/50 transition group"
                 onclick="showDetail('${item.slug}')">
-              <div class="relative h-48 overflow-hidden">
+              <div class="relative h-44 md:h-52 overflow-hidden">
                 <span class="type-badge ${getTypeClass(item.type)} bottom-2 left-2 top-auto">${item.type || 'UP'}</span>
-                <img src="${item.image}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
+                <img src="${item.image}" loading="lazy" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
               </div>
               <div class="p-3">
-                <h3 class="text-xs font-bold line-clamp-2 h-8 leading-relaxed">${item.title}</h3>
+                <h3 class="text-xs font-bold line-clamp-2 h-8 leading-relaxed group-hover:text-amber-500 transition">${item.title}</h3>
                 <div class="flex justify-between items-center mt-3">
-                  <span class="text-[10px] bg-white/5 px-2 py-1 rounded text-gray-400">${item.chapters?.[0]?.title || 'Ch.?'}</span>
-                  <span class="text-[10px] text-gray-500">${item.chapters?.[0]?.time || ''}</span>
+                  <span class="text-[10px] bg-white/5 px-2 py-1 rounded text-gray-400 group-hover:bg-amber-500/10 group-hover:text-amber-500 transition">${item.chapters?.[0]?.title || 'Ch.?'}</span>
+                  <span class="text-[9px] text-gray-600">${item.chapters?.[0]?.time || ''}</span>
                 </div>
               </div>
             </div>
@@ -202,15 +292,15 @@ async function showHome(push = true) {
         </div>
       </div>
 
-      <div>
+      <div class="animate-fade-in" style="animation-delay: 0.3s">
         <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Proyek Kami</h2>
         <div class="space-y-4">
           ${data.data.projectUpdates.map(item => `
-            <div class="flex gap-4 bg-zinc-900/30 p-2 rounded-xl cursor-pointer hover:bg-white/5 transition border border-transparent hover:border-white/10"
+            <div class="flex gap-4 bg-zinc-900/30 p-2 rounded-xl cursor-pointer hover:bg-white/5 transition border border-transparent hover:border-white/10 group"
                 onclick="showDetail('${item.slug}')">
-              <img src="${item.image}" class="w-16 h-20 rounded-lg object-cover shadow-lg">
+              <img src="${item.image}" loading="lazy" class="w-16 h-20 rounded-lg object-cover shadow-lg group-hover:scale-105 transition">
               <div class="flex-1 flex flex-col justify-center overflow-hidden">
-                <h3 class="font-bold text-xs truncate mb-1">${item.title}</h3>
+                <h3 class="font-bold text-xs truncate mb-1 group-hover:text-amber-500 transition">${item.title}</h3>
                 <div class="flex items-center gap-2">
                   <span class="text-amber-500 text-[10px] font-bold bg-amber-500/10 px-2 py-0.5 rounded">
                     ${item.chapters?.[0]?.title || ''}
@@ -254,14 +344,21 @@ async function applyAdvancedFilter() {
   const type = document.getElementById('filter-type').value;
   const status = document.getElementById('filter-status').value;
 
-  filterPanel.classList.add('hidden');
+  // Don't close if live typing (debounced), but do close if manual click or enter? 
+  // Let's keep it open if search, close if other filters
+  if(!query) filterPanel.classList.add('hidden');
+  
   setLoading();
 
   if (query) {
+    // Only search first page initially
     const data = await fetchAPI(`${API_BASE}/search/${encodeURIComponent(query)}/1`);
     renderGrid(data, `Hasil Pencarian: "${query}"`, null);
     return;
   }
+  
+  filterPanel.classList.add('hidden'); // Close only if not search text interaction
+
   if (genre) { showGenre(genre, 1); return; }
 
   let url = `${API_BASE}/list?page=1`;
@@ -275,9 +372,10 @@ function renderGrid(data, title, funcName, extraArg = null) {
   const list = data?.data || [];
   if (list.length === 0) {
     contentArea.innerHTML = `
-      <div class="text-center py-40 text-gray-500 flex flex-col items-center gap-4">
-        <i class="fa fa-folder-open text-4xl opacity-50"></i>
+      <div class="text-center py-40 text-gray-500 flex flex-col items-center gap-4 animate-fade-in">
+        <i class="fa fa-box-open text-6xl opacity-20"></i>
         <p>Tidak ada komik ditemukan.</p>
+        <button onclick="showHome()" class="px-6 py-2 bg-white/5 rounded-full hover:bg-white/10 text-sm mt-2">Kembali ke Home</button>
       </div>`;
     return;
   }
@@ -296,14 +394,14 @@ function renderGrid(data, title, funcName, extraArg = null) {
   }
 
   contentArea.innerHTML = `
-    <h2 class="text-2xl font-bold mb-8 border-l-4 border-amber-500 pl-4">${title}</h2>
-    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+    <h2 class="text-2xl font-bold mb-8 border-l-4 border-amber-500 pl-4 animate-fade-in">${title}</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 animate-fade-in">
       ${list.map(item => `
         <div class="bg-zinc-900/40 rounded-xl overflow-hidden border border-white/5 card-hover cursor-pointer relative group"
             onclick="showDetail('${item.slug}')">
           <span class="type-badge ${getTypeClass(item.type)}">${item.type || 'Comic'}</span>
           <div class="relative overflow-hidden aspect-[3/4]">
-            <img src="${item.image}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
+            <img src="${item.image}" loading="lazy" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
             <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
           </div>
           <div class="p-3 text-center">
@@ -340,7 +438,6 @@ async function showDetail(idOrSlug, push = true) {
 
   const res = data.data;
   currentChapterList = res.chapters || [];
-
   currentComicContext = { slug, title: res.title, image: res.image };
 
   const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
@@ -348,10 +445,10 @@ async function showDetail(idOrSlug, push = true) {
   const lastCh = savedItem ? savedItem.lastChapterSlug : null;
   const firstCh = res.chapters?.length > 0 ? res.chapters[res.chapters.length - 1].slug : null;
 
-  const startBtnText = lastCh ? "Lanjut Baca" : "Mulai Baca";
+  const startBtnText = lastCh ? "Lanjut Chapter Terakhir" : "Mulai Baca Chapter 1";
   const startBtnAction = lastCh
     ? `readChapter('${lastCh}', '${slug}')`
-    : (firstCh ? `readChapter('${firstCh}', '${slug}')` : "alert('Chapter belum tersedia')");
+    : (firstCh ? `readChapter('${firstCh}', '${slug}')` : "showToast('Chapter belum tersedia', 'error')");
 
   const backdropHTML = `
     <div class="fixed top-0 left-0 w-full h-[60vh] -z-10 pointer-events-none overflow-hidden">
@@ -359,9 +456,6 @@ async function showDetail(idOrSlug, push = true) {
       <div class="absolute inset-0 bg-gradient-to-b from-[#0b0b0f]/40 via-[#0b0b0f]/80 to-[#0b0b0f]"></div>
     </div>
   `;
-
-  const synopsisText = res.synopsis || "Sinopsis tidak tersedia.";
-  const isLongSynopsis = synopsisText.length > 250;
 
   contentArea.innerHTML = `
     ${backdropHTML}
@@ -400,19 +494,12 @@ async function showDetail(idOrSlug, push = true) {
           </div>
         </div>
 
-        <div class="flex flex-wrap gap-2 mb-6">
-          ${res.genres ? res.genres.map(g => `
-            <span onclick="showGenre('${g.slug}')" class="cursor-pointer hover:text-amber-500 transition text-gray-400 text-xs px-3 py-1 rounded-full border border-white/10 hover:border-amber-500/50 bg-white/5">
-              ${g.title}
-            </span>`).join('') : ''}
-        </div>
-
         <div class="bg-white/5 rounded-2xl p-5 md:p-6 mb-8 border border-white/5 backdrop-blur-sm">
           <h3 class="font-bold text-sm mb-2 text-amber-500 uppercase tracking-wide">Sinopsis</h3>
-          <p id="synopsis-text" class="text-gray-300 text-sm leading-relaxed text-justify ${isLongSynopsis ? 'line-clamp-4' : ''} transition-all duration-300">
-            ${synopsisText}
+          <p id="synopsis-text" class="text-gray-300 text-sm leading-relaxed text-justify line-clamp-4 transition-all duration-300">
+            ${res.synopsis || "Sinopsis tidak tersedia."}
           </p>
-          ${isLongSynopsis ? `
+          ${res.synopsis?.length > 250 ? `
             <button onclick="toggleSynopsis()" id="synopsis-btn" class="text-amber-500 text-xs font-bold mt-2 hover:text-white transition flex items-center gap-1">
               Baca Selengkapnya <i class="fa fa-chevron-down"></i>
             </button>` : ''}
@@ -439,7 +526,7 @@ async function showDetail(idOrSlug, push = true) {
 
   renderChapterList(res.chapters || [], slug);
   checkBookmarkStatus(slug);
-  saveHistory(slug, res.title, res.image);
+  saveHistory(slug, res.title, res.image); // Just viewing detail updates timestamp
   window.scrollTo(0, 0);
 }
 
@@ -477,7 +564,7 @@ function renderChapterList(chapters, comicSlug) {
 
         <div class="flex items-center gap-3 overflow-hidden">
           <div class="w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 text-gray-400 group-hover:text-amber-500 group-hover:bg-amber-500/10 transition shrink-0">
-            <i class="fa ${isLastRead ? 'fa-history' : 'fa-hashtag'} text-xs"></i>
+            <i class="fa ${isLastRead ? 'fa-book-reader' : 'fa-hashtag'} text-xs"></i>
           </div>
           <span class="text-sm font-medium truncate group-hover:text-amber-500 transition ${isLastRead ? 'text-amber-500' : 'text-gray-300'}">
             ${ch.title}
@@ -485,7 +572,7 @@ function renderChapterList(chapters, comicSlug) {
         </div>
 
         <div class="text-[10px] text-gray-500 bg-black/20 px-2 py-1 rounded group-hover:bg-amber-500 group-hover:text-black transition font-bold shrink-0">
-          Baca
+          ${isLastRead ? 'Melanjutkan' : 'Baca'}
         </div>
       </div>
     `;
@@ -510,24 +597,20 @@ function filterChapters() {
   }
 }
 
-/* ---------------- Reader Logic (final header 1 baris) ---------------- */
+/* ---------------- Reader Logic ---------------- */
 
 function normalizeChapterLabel(text) {
   if (!text) return "Chapter";
   const t = String(text).trim();
-
   if (/chapter/i.test(t)) return t;
-
   const m = t.match(/(\d+(\.\d+)?)/);
   if (m) return `Chapter ${m[1]}`;
-
   return t;
 }
 
 async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
   if (isNavigating) return;
   lockNav();
-
   setLoading();
 
   try {
@@ -558,22 +641,17 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
       else if (res.relation && res.relation.slug) finalComicSlug = res.relation.slug;
     }
 
-    const comicTitle =
-      currentComicContext?.title ||
-      res.comic_title ||
-      res.parent_title ||
-      "Komik";
-
+    const comicTitle = currentComicContext?.title || res.comic_title || res.parent_title || "Komik";
     const chapterLabel = normalizeChapterLabel(res.title || chSlug);
     const headerTitle = `${comicTitle} - ${chapterLabel}`;
-
     const backAction = finalComicSlug ? `showDetail('${finalComicSlug}')` : `showHome()`;
 
+    // Dropdown Logic
     let dropdownHTML = '';
     if (currentChapterList && currentChapterList.length > 0) {
       dropdownHTML = generateDropdownHTML(currentChapterList, chSlug, finalComicSlug);
     } else {
-      dropdownHTML = `<div id="dropdown-placeholder" class="w-32"></div>`;
+      dropdownHTML = `<div id="dropdown-placeholder" class="w-32 animate-pulse bg-white/5 h-8 rounded"></div>`;
     }
 
     contentArea.innerHTML = `
@@ -584,36 +662,31 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
             <button onclick="${backAction}" class="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-amber-500 hover:text-black hover:border-amber-500 transition text-white">
               <i class="fa fa-arrow-left"></i>
             </button>
-
             <div class="flex flex-col drop-shadow-md min-w-0">
-              <span class="text-[9px] text-amber-500 uppercase tracking-widest font-bold">Reading</span>
-              <h2 class="text-xs font-bold text-white max-w-[280px] truncate">${headerTitle}</h2>
+              <span class="text-[9px] text-amber-500 uppercase tracking-widest font-bold">Sedang Membaca</span>
+              <h2 class="text-xs font-bold text-white max-w-[200px] md:max-w-[400px] truncate">${headerTitle}</h2>
             </div>
           </div>
-
           <button onclick="toggleFullScreen()" class="w-10 h-10 flex items-center justify-center bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/20 transition text-white">
             <i class="fa fa-expand text-xs"></i>
           </button>
         </div>
 
-        <div id="reader-images" class="flex flex-col items-center pt-0 pb-0 min-h-screen w-full max-w-3xl mx-auto bg-[#111]" onclick="toggleReaderUI()">
-        </div>
+        <div id="reader-images" class="flex flex-col items-center pt-0 pb-0 min-h-screen w-full max-w-3xl mx-auto bg-[#111]" onclick="toggleReaderUI()"></div>
 
         <div id="reader-bottom" class="reader-ui fixed bottom-6 left-0 w-full z-[60] px-4 flex justify-center transition-all duration-300">
           <div class="glass p-2 rounded-2xl flex gap-1 items-center shadow-2xl border border-white/10 bg-black/80 backdrop-blur-xl">
             <button id="btn-prev"
-              onclick="${res.navigation?.prev ? `readChapter('${res.navigation.prev}', '${finalComicSlug || ''}')` : ''}"
-              class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation?.prev ? 'opacity-30 cursor-not-allowed text-gray-500' : 'hover:bg-amber-500 hover:text-black transition text-white'}">
+              onclick="${res.navigation?.prev ? `readChapter('${res.navigation.prev}', '${finalComicSlug || ''}')` : `showToast('Ini chapter awal', 'info')`}"
+              class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation?.prev ? 'opacity-30 cursor-not-allowed' : 'hover:bg-amber-500 hover:text-black transition text-white'}">
               <i class="fa fa-chevron-left"></i>
             </button>
 
-            <div id="chapter-dropdown-container">
-              ${dropdownHTML}
-            </div>
+            <div id="chapter-dropdown-container">${dropdownHTML}</div>
 
             <button id="btn-next"
-              onclick="${res.navigation?.next ? `readChapter('${res.navigation.next}', '${finalComicSlug || ''}')` : ''}"
-              class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation?.next ? 'opacity-30 cursor-not-allowed text-gray-500' : 'amber-gradient text-black hover:scale-105 transition shadow-lg shadow-amber-500/20'}">
+              onclick="${res.navigation?.next ? `readChapter('${res.navigation.next}', '${finalComicSlug || ''}')` : `showToast('Ini chapter terbaru', 'success')`}"
+              class="w-10 h-10 flex items-center justify-center rounded-xl ${!res.navigation?.next ? 'opacity-30 cursor-not-allowed' : 'amber-gradient text-black hover:scale-105 transition shadow-lg shadow-amber-500/20'}">
               <i class="fa fa-chevron-right"></i>
             </button>
           </div>
@@ -625,13 +698,12 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     const imgs = res.images || [];
 
     setProgress(10);
-
     let loadedCount = 0;
     const total = Math.max(1, imgs.length);
 
     imgs.forEach((imgUrl) => {
       const wrapper = document.createElement('div');
-      wrapper.className = "w-full relative min-h-[400px] bg-[#1a1a1a]";
+      wrapper.className = "w-full relative min-h-[300px] bg-[#1a1a1a]";
 
       const skeleton = document.createElement('div');
       skeleton.className = "skeleton absolute inset-0 w-full h-full z-10";
@@ -647,21 +719,21 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
         img.classList.remove('opacity-0');
         wrapper.style.minHeight = "auto";
         wrapper.style.backgroundColor = "transparent";
-        setProgress(10 + (loadedCount / total) * 70);
+        setProgress(10 + (loadedCount / total) * 80);
       };
 
       img.onerror = () => {
         loadedCount++;
         skeleton.remove();
         wrapper.innerHTML = `
-          <div class="flex flex-col items-center justify-center py-12 bg-zinc-900 text-gray-500 gap-3 border border-red-900/30">
-            <i class="fa fa-triangle-exclamation text-red-500 text-2xl"></i>
-            <span class="text-xs">Gagal memuat gambar</span>
-            <button onclick="this.parentElement.parentElement.querySelector('img').src='${imgUrl}'" class="text-[10px] bg-white/10 px-4 py-2 rounded hover:bg-white/20 mt-1">Coba Lagi</button>
+          <div class="flex flex-col items-center justify-center py-20 bg-zinc-900 text-gray-500 gap-3 border-y border-red-900/30">
+            <i class="fa fa-image-slash text-red-500 text-3xl"></i>
+            <span class="text-xs">Gambar Gagal Dimuat</span>
+            <button onclick="this.parentElement.parentElement.querySelector('img').src='${imgUrl}'" class="text-[10px] bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 mt-2">Muat Ulang</button>
           </div>
         `;
-        wrapper.appendChild(img);
-        setProgress(10 + (loadedCount / total) * 70);
+        wrapper.appendChild(img); 
+        setProgress(10 + (loadedCount / total) * 80);
       };
 
       wrapper.appendChild(skeleton);
@@ -670,17 +742,32 @@ async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     });
 
     if (finalComicSlug) {
-      // simpan history: judul chapter pakai "Chapter X" yang sudah bersih
       saveHistory(finalComicSlug, currentComicContext?.title, currentComicContext?.image, chSlug, chapterLabel);
     }
-
+    
+    // Fetch chapters for dropdown if navigating directly from link
     if ((!currentChapterList || currentChapterList.length === 0) && finalComicSlug) {
       fetchAndPopulateDropdown(finalComicSlug, chSlug);
     }
 
-    setProgress(100);
+    setTimeout(() => {
+        setProgress(100);
+        setTimeout(() => setProgress(0), 500);
+    }, 1000);
+    
     window.scrollTo(0, 0);
     bindReaderProgress();
+    
+    // Auto show UI briefly
+    const top = document.getElementById('reader-top');
+    const bottom = document.getElementById('reader-bottom');
+    if(top) top.classList.remove('ui-hidden-top');
+    if(bottom) bottom.classList.remove('ui-hidden-bottom');
+
+  } catch(err) {
+    showToast('Terjadi kesalahan memuat chapter', 'error');
+    console.error(err);
+    unlockNav();
   } finally {
     unlockNav();
   }
@@ -690,7 +777,7 @@ function generateDropdownHTML(list, currentSlug, comicSlug) {
   return `
     <div class="relative group mx-2">
       <select onchange="safeReadChapter(this.value, '${comicSlug || ''}')"
-        class="appearance-none bg-black/50 backdrop-blur text-white border border-white/10 rounded-xl text-xs py-2.5 pl-3 pr-8 focus:outline-none focus:border-amber-500 cursor-pointer hover:bg-white/10 transition w-40 md:w-auto truncate">
+        class="appearance-none bg-black/50 backdrop-blur text-white border border-white/10 rounded-xl text-xs py-2.5 pl-3 pr-8 focus:outline-none focus:border-amber-500 cursor-pointer hover:bg-white/10 transition w-32 md:w-auto truncate">
         ${list.map(ch => `<option value="${ch.slug}" ${ch.slug === currentSlug ? 'selected' : ''}>${ch.title}</option>`).join('')}
       </select>
       <i class="fa fa-chevron-up absolute right-3 top-1/2 -translate-y-1/2 text-[10px] pointer-events-none text-gray-400"></i>
@@ -708,6 +795,7 @@ async function fetchAndPopulateDropdown(comicSlug, currentChapterSlug) {
     if (container) {
       container.innerHTML = generateDropdownHTML(currentChapterList, currentChapterSlug, comicSlug);
     }
+    // Update history again with correct Title if it was missing
     saveHistory(comicSlug, data.data.title, data.data.image, currentChapterSlug);
   }
 }
@@ -722,38 +810,86 @@ function toggleReaderUI() {
 
 /* ---------------- History & Bookmarks ---------------- */
 
-function handleSearch(e) { if (e.key === 'Enter') applyAdvancedFilter(); }
-
-function saveHistory(slug, title, image, chSlug, chTitle) {
+// Save history (Fixed to ensure it saves correct data)
+function saveHistory(slug, title, image, chSlug = null, chTitle = null) {
   let history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-  let existing = history.find(h => h.slug === slug);
+  
+  // Remove existing entry for this slug to bring it to top
+  const existingIndex = history.findIndex(h => h.slug === slug);
+  let existing = existingIndex > -1 ? history[existingIndex] : {};
+  
+  // If we just clicked detail, don't overwrite the last read chapter if it exists
+  const lastChSlug = chSlug || existing.lastChapterSlug;
+  const lastChTitle = chTitle || existing.lastChapterTitle || 'Belum dibaca';
+  
+  if(existingIndex > -1) {
+     history.splice(existingIndex, 1);
+  }
 
   const data = {
     slug,
-    title: title || existing?.title || 'Unknown Title',
-    image: image || existing?.image || 'assets/icon.png',
-    lastChapterSlug: chSlug || existing?.lastChapterSlug,
-    lastChapterTitle: chTitle || existing?.lastChapterTitle || 'Chapter ?',
+    title: title || existing.title || 'Unknown Title',
+    image: image || existing.image || 'assets/icon.png',
+    lastChapterSlug: lastChSlug,
+    lastChapterTitle: lastChTitle,
     timestamp: new Date().getTime()
   };
 
-  history = history.filter(h => h.slug !== slug);
   history.unshift(data);
-  if (history.length > 50) history.pop();
+  if (history.length > 50) history.pop(); // Max 50 items
   localStorage.setItem('fmc_history', JSON.stringify(history));
 }
 
 function showHistory() {
   updateURL('/history'); resetNavs();
   let history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-  renderGrid({ data: history }, "Riwayat Baca", null);
+  
+  if(history.length === 0) {
+      contentArea.innerHTML = `
+      <div class="text-center py-40 text-gray-500 flex flex-col items-center gap-4">
+        <i class="fa fa-clock-rotate-left text-4xl opacity-50"></i>
+        <p>Belum ada riwayat baca.</p>
+      </div>`;
+      return;
+  }
+  
+  contentArea.innerHTML = `
+    <div class="flex items-center justify-between mb-8 border-l-4 border-amber-500 pl-4">
+        <h2 class="text-2xl font-bold">Riwayat Baca</h2>
+        <button onclick="localStorage.removeItem('fmc_history'); showHistory()" class="text-xs text-red-500 hover:text-red-400">Hapus Semua</button>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+      ${history.map(item => `
+        <div class="bg-zinc-900/40 rounded-xl overflow-hidden border border-white/5 card-hover cursor-pointer relative group"
+            onclick="showDetail('${item.slug}')">
+          <div class="relative overflow-hidden aspect-[3/4]">
+            <img src="${item.image}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
+             <div class="absolute inset-0 bg-black/40 group-hover:bg-transparent transition"></div>
+          </div>
+          <div class="p-3">
+            <h3 class="text-xs font-bold truncate text-gray-200 group-hover:text-amber-500 transition">${item.title}</h3>
+            <div class="mt-2 flex items-center justify-between">
+                <span class="text-[9px] text-gray-500">Terakhir:</span>
+                <span class="text-[9px] text-amber-500 font-bold bg-amber-500/10 px-2 py-0.5 rounded">${item.lastChapterTitle || 'Detail'}</span>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
 }
 
 function toggleBookmark(slug, title, image) {
   let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
   const idx = bookmarks.findIndex(b => b.slug === slug);
-  if (idx > -1) bookmarks.splice(idx, 1);
-  else bookmarks.push({ slug, title, image });
+  
+  if (idx > -1) {
+      bookmarks.splice(idx, 1);
+      showToast('Dihapus dari Bookmark', 'info');
+  } else {
+      bookmarks.push({ slug, title, image, addedAt: new Date().getTime() });
+      showToast('Disimpan ke Bookmark', 'success');
+  }
+  
   localStorage.setItem('fmc_bookmarks', JSON.stringify(bookmarks));
   checkBookmarkStatus(slug);
 }
@@ -777,7 +913,18 @@ function checkBookmarkStatus(slug) {
 function showBookmarks() {
   updateURL('/bookmarks'); resetNavs();
   let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
-  renderGrid({ data: bookmarks }, "Koleksi Favorit", null);
+  
+   if(bookmarks.length === 0) {
+      contentArea.innerHTML = `
+      <div class="text-center py-40 text-gray-500 flex flex-col items-center gap-4">
+        <i class="fa fa-bookmark text-4xl opacity-50"></i>
+        <p>Belum ada bookmark.</p>
+      </div>`;
+      return;
+  }
+  
+  // Use generic render but mapped
+  renderGrid({data: bookmarks}, "Koleksi Favorit", null);
 }
 
 /* ---------------- Init ---------------- */
