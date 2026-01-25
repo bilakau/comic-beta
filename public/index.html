@@ -7,16 +7,21 @@
   <title>FmcComic - Free Comic Tanpa Iklan</title>
 
   <link rel="icon" href="assets/icon.png" type="image/jpeg" />
-
-  <!-- Tailwind & Icons -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-
   <link rel="stylesheet" href="style.css" />
 </head>
 
 <body class="overflow-x-hidden bg-[#0b0b0f] text-gray-200">
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-20 right-5 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- Scroll Top Button -->
+  <button id="scroll-top" onclick="window.scrollTo(0,0)" class="fixed bottom-20 right-4 z-40 w-10 h-10 bg-amber-500 text-black rounded-full shadow-lg shadow-amber-500/20 translate-y-20 opacity-0 transition-all duration-300 flex items-center justify-center font-bold">
+    <i class="fa fa-arrow-up"></i>
+  </button>
 
   <!-- Progress Bar Reading -->
   <div id="progress-bar" style="width: 0%"></div>
@@ -51,13 +56,14 @@
     </div>
   </nav>
 
-  <!-- Filter Panel -->
-  <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4 shadow-2xl">
+  <!-- Filter Panel (Live Search Updated) -->
+  <div id="filter-panel" class="fixed top-16 left-0 w-full glass z-[45] hidden border-b border-amber-500/20 p-4 shadow-2xl animate-fade-in">
     <div class="container mx-auto">
       <div class="flex flex-col gap-4 max-w-4xl mx-auto">
         <div class="relative w-full">
           <i class="fa fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
-          <input type="text" id="search-input" onkeyup="handleSearch(event)" placeholder="Cari judul komik..."
+          <!-- Changed event to input for live search -->
+          <input type="text" id="search-input" oninput="handleSearchInput(event)" placeholder="Cari judul komik..."
             class="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-amber-500 transition text-white placeholder-gray-500" />
         </div>
 
@@ -88,23 +94,21 @@
     </div>
   </div>
 
-  <!-- Main Content -->
   <main class="container mx-auto mt-24 px-4 pb-32 min-h-screen">
     <div id="content-area"></div>
   </main>
 
-  <!-- Mobile Nav -->
   <div id="mobile-nav" class="fixed bottom-0 w-full glass border-t border-white/5 flex justify-around p-3 md:hidden z-50 transition-transform duration-300 pb-safe">
-    <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16">
+    <button onclick="showHome()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16 hover:text-white transition">
       <i class="fa fa-home text-lg"></i><span class="text-[10px]">Home</span>
     </button>
-    <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16">
-      <i class="fa fa-fire text-lg text-orange-500"></i><span class="text-[10px]">Hot</span>
+    <button onclick="showOngoing()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16 hover:text-orange-500 transition">
+      <i class="fa fa-fire text-lg"></i><span class="text-[10px]">Hot</span>
     </button>
-    <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16">
-      <i class="fa fa-check-circle text-lg text-green-500"></i><span class="text-[10px]">Tamat</span>
+    <button onclick="showCompleted()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16 hover:text-green-500 transition">
+      <i class="fa fa-check-circle text-lg"></i><span class="text-[10px]">Tamat</span>
     </button>
-    <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16">
+    <button onclick="showHistory()" class="flex flex-col items-center gap-1 text-gray-400 active:text-amber-500 w-16 hover:text-amber-500 transition">
       <i class="fa fa-history text-lg"></i><span class="text-[10px]">Riwayat</span>
     </button>
   </div>
