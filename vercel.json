@@ -5,6 +5,9 @@
     { "source": "/series/(.*)", "destination": "/index.html" },
     { "source": "/chapter/(.*)", "destination": "/index.html" },
     { "source": "/ongoing", "destination": "/index.html" },
-    { "source": "/completed", "destination": "/index.html" }
+    { "source": "/completed", "destination": "/index.html" },
+    { "source": "/history", "destination": "/index.html" },
+    { "source": "/bookmarks", "destination": "/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
