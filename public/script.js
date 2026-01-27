@@ -1,19 +1,51 @@
 /*
-  FmcComic Ultra - Fixed Structure & Logic v3
-  Fixes: Empty Home, "Tanpa Judul" Detail, API Response handling
+  FmcComic Ultra v2.1 - OPTIMIZED VERSION
+  Fitur Perbaikan: Parallel Loading, Advanced Caching, Image Lazy Load
 */
 
-// Jika NekoLabs sering down/limit, ganti URL proxy ini
 const API_PROXY = "https://api.nekolabs.web.id/px?url=";
 const API_BASE = "https://www.sankavollerei.com/comic/komikcast";
 const BACKEND_URL = window.location.origin;
 
-// State
+// ===============================
+// OPTIMASI #1: Advanced State & Cache Management
+// ===============================
 let appState = {
     isNavigating: false,
     currentChapterList: [],
     comicData: null,
     settings: JSON.parse(localStorage.getItem('fmc_settings') || '{"fitMode": "contain", "brightness": 100}'),
+    debounceTimer: null,
+    requestQueue: new Map() // Request deduplication
+};
+
+// Cache dengan TTL
+const API_CACHE = {
+    data: new Map(),
+    TTL: 10 * 60 * 1000, // 10 menit
+    
+    set(key, value) {
+        this.data.set(key, {
+            value,
+            expiry: Date.now() + this.TTL
+        });
+    },
+    
+    get(key) {
+        const item = this.data.get(key);
+        if (!item) return null;
+        
+        if (Date.now() > item.expiry) {
+            this.data.delete(key);
+            return null;
+        }
+        
+        return item.value;
+    },
+    
+    clear() {
+        this.data.clear();
+    }
 };
 
 // Elements
@@ -31,12 +63,12 @@ const dom = {
 
 /* --- SYSTEM --- */
 
+// Initializer
 document.addEventListener('DOMContentLoaded', () => {
     loadGenres();
     applySettings();
     handleRouting();
     
-    // Close modal if clicked outside
     document.addEventListener('click', (e) => {
         if (!e.target.closest('#filter-panel') && !e.target.closest('[onclick="toggleFilter()"]')) {
             dom.filterPanel.classList.add('hidden');
@@ -46,22 +78,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('popstate', handleRouting);
 
+// Global Scroll Logic
 window.onscroll = () => {
     const scrollBtn = document.getElementById('scroll-top');
     const scrolled = window.scrollY;
     
     if (scrolled > 400) {
-        scrollBtn.classList.remove('opacity-0', 'translate-y-24');
-        scrollBtn.classList.add('translate-y-0', 'opacity-100');
+        scrollBtn?.classList.remove('opacity-0', 'translate-y-24');
+        scrollBtn?.classList.add('translate-y-0', 'opacity-100');
     } else {
-        scrollBtn.classList.add('opacity-0', 'translate-y-24');
-        scrollBtn.classList.remove('translate-y-0', 'opacity-100');
+        scrollBtn?.classList.add('opacity-0', 'translate-y-24');
+        scrollBtn?.classList.remove('translate-y-0', 'opacity-100');
     }
-    
-    if(dom.navs.main) {
-        if(scrolled > 50) dom.navs.main.classList.add('shadow-xl', 'bg-[#0a0a0c]/95');
-        else dom.navs.main.classList.remove('shadow-xl', 'bg-[#0a0a0c]/95');
-    }
+
+    if(scrolled > 50) dom.navs.main.classList.add('shadow-xl', 'bg-[#0a0a0c]/95');
+    else dom.navs.main.classList.remove('shadow-xl', 'bg-[#0a0a0c]/95');
 };
 
 /* --- HELPER --- */
@@ -75,12 +106,11 @@ function updateURL(path) {
 }
 
 function showToast(msg, type = 'info') {
-    if(!dom.toastContainer) return;
     const toast = document.createElement('div');
     const color = type === 'error' ? 'bg-red-500' : (type === 'success' ? 'bg-green-500' : 'bg-blue-600');
     const icon = type === 'error' ? 'fa-triangle-exclamation' : (type === 'success' ? 'fa-check' : 'fa-info');
     
-    toast.className = "flex items-center gap-3 bg-[#1e1e24] border border-white/5 shadow-2xl rounded-xl p-4 min-w-[300px] animate-fade-in backdrop-blur-md transform transition-all hover:scale-[1.02] cursor-pointer";
+    toast.className = "flex items-center gap-3 bg-[#1e1e24] border border-white/5 shadow-2xl rounded-xl p-4 min-w-[300px] animate-fade-in backdrop-blur-md transform transition-all hover:scale-[1.02] cursor-pointer pointer-events-auto";
     toast.onclick = () => toast.remove();
     toast.innerHTML = `
         <div class="w-8 h-8 rounded-full ${color} flex items-center justify-center flex-shrink-0 text-white shadow-lg"><i class="fa ${icon}"></i></div>
@@ -88,66 +118,124 @@ function showToast(msg, type = 'info') {
     `;
     
     dom.toastContainer.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+    setTimeout(() => { 
+        toast.style.opacity = '0'; 
+        setTimeout(() => toast.remove(), 300); 
+    }, 3000);
 }
 
-// -------------------------------------------------------------
-// BAGIAN PENTING 1: FETCHING LEBIH PINTAR
-// Fungsi ini akan mencari data di berbagai kemungkinan struktur JSON
-// -------------------------------------------------------------
-async function api(endpoint) {
-    // Controller timeout untuk membatalkan request lama yang stuck
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20 detik max
-
-    try {
-        const fullUrl = API_PROXY + encodeURIComponent(`${API_BASE}${endpoint}`);
-        console.log(`[API Calling] -> ${endpoint}`);
-
-        const res = await fetch(fullUrl, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
-        const json = await res.json();
-        
-        // Logika untuk menemukan data "Daging" nya
-        // Beberapa endpoint mengembalikan json.data, ada yg json.result
-        if (json.data) return json.data; 
-        if (json.result) return json.result; 
-        if (json.success === true && json.content) return json.content;
-        
-        // Jika struktur flat
-        return json;
-    } catch (err) {
-        console.error(`[API Fail] ${endpoint}`, err);
-        return null; // Return null biar bisa di handle fungsi lain
-    } finally {
-        clearTimeout(timeoutId);
+// ===============================
+// OPTIMASI #2: API dengan Cache & Retry Logic
+// ===============================
+async function api(endpoint, useCache = true) {
+    const cacheKey = `api:${endpoint}`;
+    
+    // Cek cache dulu
+    if (useCache) {
+        const cached = API_CACHE.get(cacheKey);
+        if (cached) {
+            console.log('📦 Cache hit:', endpoint);
+            return cached;
+        }
     }
+    
+    // Request deduplication - kalau sudah ada request yang sama, tunggu saja
+    if (appState.requestQueue.has(cacheKey)) {
+        console.log('⏳ Waiting for existing request:', endpoint);
+        return appState.requestQueue.get(cacheKey);
+    }
+    
+    // Buat request baru
+    const requestPromise = (async () => {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+            
+            const res = await fetch(
+                API_PROXY + encodeURIComponent(`${API_BASE}${endpoint}`),
+                { signal: controller.signal }
+            );
+            
+            clearTimeout(timeoutId);
+            
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            
+            const json = await res.json();
+            const data = json.success ? (json.result?.content || json.result || json.data) : null;
+            
+            if (data && useCache) {
+                API_CACHE.set(cacheKey, data);
+            }
+            
+            return data;
+            
+        } catch (err) {
+            console.error('API Error:', endpoint, err.message);
+            
+            if (err.name === 'AbortError') {
+                showToast('Koneksi timeout, coba lagi', 'error');
+            } else {
+                showToast('Gagal memuat data', 'error');
+            }
+            
+            return null;
+        } finally {
+            appState.requestQueue.delete(cacheKey);
+        }
+    })();
+    
+    appState.requestQueue.set(cacheKey, requestPromise);
+    return requestPromise;
 }
 
+// ===============================
+// OPTIMASI #3: UUID dengan Fallback & Parallel Request
+// ===============================
 async function getUuid(slug, type) {
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout untuk UUID
+        
         const res = await fetch(`${BACKEND_URL}/api/get-id`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({slug, type})
+            body: JSON.stringify({slug, type}),
+            signal: controller.signal
         });
-        const d = await res.json();
-        return d.uuid || slug;
-    } catch { return slug; }
+        
+        clearTimeout(timeoutId);
+        
+        if (!res.ok) return slug; // Fallback ke slug
+        
+        const data = await res.json();
+        return data.uuid || slug;
+        
+    } catch (err) {
+        console.warn('UUID fetch failed, using slug:', err.message);
+        return slug; // Fallback
+    }
 }
 
 async function getSlug(uuid) {
-    // Validasi format UUID sederhana (36 karakter)
-    if (!uuid || uuid.length !== 36) return { slug: uuid }; 
     try {
-        const res = await fetch(`${BACKEND_URL}/api/get-slug/${uuid}`);
-        return res.ok ? await res.json() : { slug: uuid };
-    } catch { return { slug: uuid }; }
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const res = await fetch(`${BACKEND_URL}/api/get-slug/${uuid}`, {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!res.ok) return { slug: uuid, type: 'series' };
+        
+        return await res.json();
+    } catch {
+        return { slug: uuid, type: 'series' };
+    }
 }
 
-
-/* --- RENDERER UI --- */
+/* --- RENDERER PAGES --- */
 
 function renderLoading() {
     dom.content.innerHTML = `
@@ -161,37 +249,20 @@ function renderLoading() {
     `;
 }
 
-function renderError(title, msg, retryFn) {
-    dom.content.innerHTML = `
-        <div class="container mx-auto px-4 py-32 flex flex-col items-center justify-center text-center">
-            <i class="fa fa-triangle-exclamation text-4xl text-amber-500 mb-4"></i>
-            <h2 class="text-xl font-bold mb-2">${title}</h2>
-            <p class="text-gray-500 text-sm max-w-md mb-6">${msg}</p>
-            <button onclick="${retryFn}" class="px-6 py-2.5 bg-white/10 hover:bg-white/20 border border-white/5 rounded-xl transition text-sm font-bold">Coba Lagi</button>
-        </div>
-    `;
-}
-
 async function handleRouting() {
-    appState.isNavigating = false;
     const path = window.location.pathname;
     
-    // Highlight Navbar
-    if(document.querySelectorAll('.nav-btn')) {
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-amber-500', 'active'));
-    }
-
-    // Routing Logic
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-amber-500', 'active'));
+    
     if (path.startsWith('/chapter')) {
         const id = path.split('/')[2];
-        if(id) readChapter(id, null, false);
+        readChapter(id, null, false);
     } 
     else if (path.startsWith('/series')) {
         const id = path.split('/')[2];
-        if(id) showDetail(id, false);
+        showDetail(id, false);
     }
     else {
-        // Show Navs
         dom.navs.main.classList.remove('-translate-y-full');
         dom.navs.mobile.classList.remove('translate-y-full');
         
@@ -203,94 +274,72 @@ async function handleRouting() {
     }
 }
 
-
-/* --- PAGE: HOME (Fixed Empty Bug) --- */
-// Jika 'hotUpdates' tidak ada, kode ini akan otomatis mencari kunci lain agar tidak kosong
+/* --- PAGE: HOME --- */
 
 async function showHome(push = true) {
     if (push) updateURL('/');
     renderLoading();
     setSEO();
     
-    const raw = await api('/home');
-
-    // Analisa struktur data untuk Home
-    // Kadang 'raw' itu object yang isinya { popular: [...], latest: [...] }
-    // Kadang array flat
-    let popularList = [];
-    let latestList = [];
-
-    if (raw) {
-        // Cek struktur umum API Sanka
-        if (Array.isArray(raw)) {
-            // Kalau data langsung array, kemungkinan hanya latest update
-            latestList = raw;
-        } else {
-            // Ambil dari berbagai kemungkinan nama kunci
-            popularList = raw.hotUpdates || raw.popular || raw.popular_comics || raw.project || [];
-            latestList = raw.latestReleases || raw.latest || raw.update || raw.data || [];
-        }
-    } else {
-        return renderError('Koneksi Gagal', 'Gagal terhubung ke sumber komik.', 'showHome()');
+    const data = await api('/home');
+    if (!data) {
+        dom.content.innerHTML = `<div class="text-center py-20 text-gray-500">Gagal memuat home. <button onclick="showHome()" class="text-amber-500 underline ml-2">Coba lagi</button></div>`;
+        return;
     }
 
-    // Ambil slice untuk hero
-    const heroSlides = popularList.slice(0, 5);
+    const heroSlides = data.hotUpdates.slice(0, 6);
     const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
 
-    let html = '';
-
-    // -- HERO SECTION --
-    if (heroSlides.length > 0) {
-        html += `
-        <div class="swiper mySwiper w-full h-[55vh] md:h-[65vh] relative group bg-black">
-            <div class="swiper-wrapper">
-                ${heroSlides.map(slide => `
-                    <div class="swiper-slide relative w-full h-full cursor-pointer" onclick="showDetail('${slide.slug}')">
-                        <img src="${slide.image}" class="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:scale-105 transition duration-[10s]">
-                        <div class="absolute inset-0 bg-gradient-to-t from-[#0a0a0c] via-[#0a0a0c]/60 to-transparent"></div>
-                        <div class="absolute inset-0 bg-gradient-to-r from-[#0a0a0c]/90 via-transparent to-transparent"></div>
-                        
-                        <div class="absolute bottom-0 left-0 w-full p-6 md:p-12 md:bottom-10 z-20 flex flex-col justify-end h-full">
-                            <div class="container mx-auto">
-                                <span class="inline-block px-3 py-1 rounded-md bg-amber-500 text-black text-[10px] font-bold uppercase tracking-widest mb-3 shadow-lg shadow-amber-500/30">
-                                    TRENDING
+    let html = `
+    <!-- HERO SLIDER -->
+    <div class="swiper mySwiper w-full h-[55vh] md:h-[65vh] relative group bg-black">
+        <div class="swiper-wrapper">
+            ${heroSlides.map(slide => `
+                <div class="swiper-slide relative w-full h-full cursor-pointer" onclick="showDetail('${slide.slug}')">
+                    <img src="${slide.image}" loading="lazy" class="absolute inset-0 w-full h-full object-cover opacity-60">
+                    <div class="absolute inset-0 bg-gradient-to-t from-[#0a0a0c] via-[#0a0a0c]/60 to-transparent"></div>
+                    <div class="absolute bottom-0 left-0 w-full p-6 md:p-12 z-20 flex flex-col justify-end h-full">
+                        <div class="container mx-auto">
+                            <span class="inline-block px-3 py-1 rounded-md bg-amber-500 text-black text-[10px] font-bold uppercase tracking-widest mb-3">
+                                ${slide.type || 'TRENDING'}
+                            </span>
+                            <h2 class="text-2xl md:text-5xl font-black text-white leading-tight mb-2 md:max-w-2xl line-clamp-2">
+                                ${slide.title}
+                            </h2>
+                            <p class="text-gray-300 text-sm mb-4 flex items-center gap-2">
+                                <span class="bg-white/10 px-2 py-1 rounded border border-white/10 text-amber-400">
+                                    <i class="fa fa-book-open mr-1"></i> ${slide.chapter || slide.latestChapter}
                                 </span>
-                                <h2 class="text-2xl md:text-5xl font-black text-white leading-tight mb-2 md:max-w-2xl line-clamp-2 drop-shadow-lg">
-                                    ${slide.title}
-                                </h2>
-                                <p class="text-gray-300 text-sm font-medium mb-4 flex items-center gap-2">
-                                    <span class="bg-white/10 px-2 py-1 rounded border border-white/10 text-amber-400">
-                                        ${slide.chapter || slide.latestChapter || 'Baca Sekarang'}
-                                    </span>
-                                </p>
-                            </div>
+                            </p>
+                            <button class="bg-white text-black px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-amber-500 transition">
+                                <i class="fa fa-play"></i> Baca Sekarang
+                            </button>
                         </div>
                     </div>
-                `).join('')}
-            </div>
-            <div class="swiper-pagination !bottom-6 md:!bottom-10 md:!left-12 md:!w-auto container mx-auto"></div>
+                </div>
+            `).join('')}
         </div>
-        `;
-    }
+        <div class="swiper-pagination !bottom-6 md:!bottom-10 md:!left-12 container mx-auto"></div>
+    </div>
 
-    html += `<div class="container mx-auto px-4 ${heroSlides.length > 0 ? '-mt-10 relative z-30' : 'mt-24'} pb-24">`;
+    <div class="container mx-auto px-4 -mt-10 relative z-30 pb-20">
+    `;
 
-    // -- HISTORY STRIP --
+    // History Strip
     if (history.length > 0) {
         html += `
         <div class="mb-10">
-            <h3 class="text-xs font-bold text-gray-500 mb-3 flex items-center gap-2 uppercase tracking-wide">
+            <h3 class="text-sm font-bold text-gray-400 mb-3 flex items-center gap-2 uppercase tracking-wide">
                <i class="fa fa-clock-rotate-left text-amber-500"></i> Lanjutkan Baca
             </h3>
             <div class="flex overflow-x-auto gap-4 hide-scroll pb-2">
-                ${history.slice(0,6).map(h => `
+                ${history.slice(0,8).map(h => `
                     <div onclick="readChapter('${h.lastChapterSlug}', '${h.slug}')" 
-                        class="min-w-[220px] bg-[#1a1a1d] p-3 rounded-xl flex gap-3 cursor-pointer hover:bg-[#25252b] border border-white/5 hover:border-amber-500/30 transition">
-                        <img src="${h.image}" onerror="this.src='assets/icon.png'" class="w-10 h-14 rounded object-cover shadow bg-gray-800">
+                        class="min-w-[200px] bg-[#1a1a1d] p-3 rounded-xl flex gap-3 cursor-pointer hover:bg-[#25252b] border border-white/5 hover:border-amber-500/30 transition group">
+                        <img src="${h.image}" loading="lazy" class="w-12 h-16 rounded object-cover shadow bg-gray-800">
                         <div class="flex flex-col justify-center min-w-0">
-                            <h4 class="text-xs font-bold text-white truncate mb-1">${h.title}</h4>
-                            <span class="text-[10px] text-amber-500 bg-amber-500/10 w-max px-2 py-0.5 rounded border border-amber-500/20">${h.lastChapterTitle || 'Lanjut'}</span>
+                            <h4 class="text-xs font-bold text-white truncate mb-1 group-hover:text-amber-500">${h.title}</h4>
+                            <span class="text-[10px] text-gray-400 bg-black/30 w-max px-2 py-0.5 rounded">${h.lastChapterTitle || 'Lanjut'}</span>
                         </div>
                     </div>
                 `).join('')}
@@ -298,258 +347,317 @@ async function showHome(push = true) {
         </div>`;
     }
 
-    // -- LATEST RELEASES --
+    // Latest Grid
     html += `
         <div class="flex items-center justify-between mb-6">
-            <h2 class="text-xl font-bold text-white border-l-4 border-amber-500 pl-4">Update Terbaru</h2>
+            <h2 class="text-xl font-bold text-white border-l-4 border-amber-500 pl-4">Rilis Terbaru</h2>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 gap-y-6">
-            ${latestList.length > 0 ? latestList.map(item => cardTemplate(item)).join('') : `
-            <div class="col-span-full text-center py-10 border border-dashed border-white/10 rounded-xl">
-                <p class="text-gray-500 text-sm">Data Latest Update belum tersedia dari API.</p>
-                <button onclick="showOngoing()" class="mt-4 text-amber-500 text-sm underline">Coba Cek Tab Ongoing</button>
-            </div>`}
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 gap-y-8">
+            ${data.latestReleases.map(item => cardTemplate(item)).join('')}
         </div>
         
-        <div class="mt-10 flex justify-center">
-             <button onclick="showOngoing()" class="px-8 py-3 rounded-full border border-white/10 bg-white/5 hover:bg-amber-500 hover:text-black hover:border-transparent transition font-bold text-sm shadow-xl">Lihat Komik Lainnya</button>
+        <div class="mt-8 flex justify-center">
+             <button onclick="showOngoing()" class="px-8 py-3 rounded-full border border-white/10 hover:bg-amber-500 hover:text-black transition font-bold text-sm">
+                Lihat Semua Update
+             </button>
         </div>
     </div>`;
 
     dom.content.innerHTML = html;
 
-    if (heroSlides.length > 0) {
-        new Swiper(".mySwiper", {
-            loop: true,
-            effect: "fade",
-            autoplay: { delay: 4000, disableOnInteraction: false },
-            pagination: { el: ".swiper-pagination", clickable: true },
-        });
-    }
+    // Initialize Swiper
+    new Swiper(".mySwiper", {
+        loop: true,
+        effect: "fade",
+        autoplay: { delay: 4000, disableOnInteraction: false },
+        pagination: { el: ".swiper-pagination", clickable: true },
+        allowTouchMove: true
+    });
 }
 
-
-/* --- COMPONENT: CARD --- */
-
+/* --- COMPONENTS: CARD --- */
 function cardTemplate(item) {
-    if(!item) return '';
-    // Menangani variasi penamaan variabel di API yang berbeda-beda
-    const title = item.title || "No Title";
-    const slug = item.slug || item.endpoint;
-    const img = item.image || item.thumb || "https://ui-avatars.com/api/?background=333&color=fff&name=Manga";
-    const ch = item.chapters?.[0]?.title || item.chapter || item.latestChapter || 'Read';
+    const ch = item.chapters?.[0]?.title || item.latestChapter || 'Unknown';
     const type = (item.type || '').toLowerCase();
-
-    // Style Badge Type
+    
     let typeClass = 'border-gray-600 bg-gray-600/20 text-gray-300';
-    if(type.includes('manga')) typeClass = 'border-blue-500 bg-blue-500/20 text-blue-300';
-    else if(type.includes('manhwa')) typeClass = 'border-green-500 bg-green-500/20 text-green-300';
-    else if(type.includes('manhua')) typeClass = 'border-pink-500 bg-pink-500/20 text-pink-300';
+    if(type.includes('manga')) typeClass = 'type-manga';
+    else if(type.includes('manhwa')) typeClass = 'type-manhwa';
+    else if(type.includes('manhua')) typeClass = 'type-manhua';
 
     return `
-    <div class="group relative cursor-pointer active:scale-95 transition-transform" onclick="showDetail('${slug}')">
-        <div class="relative rounded-xl overflow-hidden aspect-[3/4] mb-3 border border-white/10 bg-[#151518]">
-            ${type ? `<span class="absolute top-2 right-2 z-10 text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded border backdrop-blur-md ${typeClass}">${type}</span>` : ''}
+    <div class="group relative cursor-pointer" onclick="showDetail('${item.slug}')">
+        <div class="relative rounded-2xl overflow-hidden aspect-[2/3] mb-3 border border-white/10">
+            <span class="type-badge absolute top-2 right-2 z-10 ${typeClass}">${item.type || 'UP'}</span>
+            <div class="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-black/90 to-transparent z-10"></div>
             
-            <img src="${img}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500" loading="lazy">
-            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
+            <img src="${item.image}" loading="lazy" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
             
-            <div class="absolute bottom-2 left-2 z-20">
-                 <div class="text-[9px] font-bold text-black bg-amber-500 px-2 py-0.5 rounded shadow-lg">
+            <div class="absolute bottom-3 left-3 z-20">
+                 <div class="text-[10px] bg-amber-500 text-black font-extrabold px-2 py-1 rounded w-max shadow-lg">
                     ${ch}
                  </div>
             </div>
         </div>
-        <h3 class="font-bold text-xs sm:text-sm text-gray-200 line-clamp-2 leading-snug group-hover:text-amber-500 transition">${title}</h3>
+        <h3 class="font-bold text-sm text-gray-200 line-clamp-2 leading-tight group-hover:text-amber-500 transition">${item.title}</h3>
     </div>`;
 }
 
-
-/* --- PAGE: LIST (Ongoing/Completed) --- */
+/* --- LIST PAGES --- */
 
 async function showOngoing(page=1, push=true) {
     if(push) updateURL('/ongoing');
-    genericListLoad(`${API_BASE}/list?status=Ongoing&orderby=popular&page=${page}`, `Komik Ongoing - Hal ${page}`, 'showOngoing', page);
+    genericListLoad(`/list?status=Ongoing&orderby=popular&page=${page}`, `Komik Ongoing - Hal ${page}`, 'showOngoing', page);
 }
 
 async function showCompleted(page=1, push=true) {
     if(push) updateURL('/completed');
-    genericListLoad(`${API_BASE}/list?status=Completed&orderby=popular&page=${page}`, `Komik Tamat - Hal ${page}`, 'showCompleted', page);
+    genericListLoad(`/list?status=Completed&orderby=popular&page=${page}`, `Komik Tamat - Hal ${page}`, 'showCompleted', page);
 }
 
 async function applyAdvancedFilter() {
-    const q = document.getElementById('search-input').value;
+    const q = document.getElementById('search-input').value.trim();
     const g = document.getElementById('filter-genre').value;
     dom.filterPanel.classList.add('hidden');
     
-    if(q) genericListLoad(`${API_BASE}/search/${encodeURIComponent(q)}/1`, `Hasil: "${q}"`, null);
-    else if (g) showGenre(g);
-    else genericListLoad(`${API_BASE}/list?orderby=popular&page=1`, 'Filter Result', null);
+    if(q) {
+        genericListLoad(`/search/${encodeURIComponent(q)}/1`, `Pencarian: "${q}"`, null);
+    } else {
+        const type = document.getElementById('filter-type').value;
+        const status = document.getElementById('filter-status').value;
+        let url = `/list?orderby=popular&page=1`;
+        if(type) url += `&type=${type}`;
+        if(status) url += `&status=${status}`;
+        if(g) { showGenre(g); return; }
+        
+        genericListLoad(url, 'Hasil Filter', null);
+    }
 }
 
-async function genericListLoad(url, titleStr, funcName, currentPage=1) {
+async function genericListLoad(endpoint, titleStr, funcName, currentPage=1) {
     renderLoading();
     setSEO(titleStr);
     
-    // API logic dipisah
-    const raw = await api(url.replace(API_BASE, ''));
-    let items = [];
-    let pagination = {};
-
-    // Menangani struktur { data: [...], pagination: {...} } vs flat array [...]
-    if (raw) {
-        if(Array.isArray(raw)) items = raw;
-        else if(raw.data) {
-            items = raw.data;
-            pagination = raw.pagination || {};
-        }
+    const data = await api(endpoint);
+    
+    if(!data || !data.data || data.data.length === 0) {
+        dom.content.innerHTML = `
+            <div class="h-screen flex flex-col items-center justify-center text-gray-500">
+                <i class="fa fa-ghost text-4xl mb-4"></i>
+                <p>Tidak ada hasil.</p>
+                <button onclick="showHome()" class="mt-4 text-amber-500 font-bold underline">Kembali ke Home</button>
+            </div>`;
+        return;
     }
 
-    if(items.length === 0) {
-        return renderError('Kosong', 'Tidak ada komik yang ditemukan.', 'showHome()');
-    }
+    const items = data.data;
+    const pagination = data.pagination || {};
 
-    // Pagination Logic (Basic)
     let navHtml = '';
-    if (funcName) {
+    if (funcName && pagination) {
         navHtml = `
         <div class="col-span-full flex justify-center gap-4 py-8">
-            ${currentPage > 1 ? `<button onclick="${funcName}(${currentPage - 1})" class="bg-white/10 px-5 py-2 rounded-lg hover:bg-amber-500 hover:text-black font-bold text-xs transition">PREV</button>` : ''}
-            <span class="px-3 py-2 text-gray-600 font-mono text-xs">Page ${currentPage}</span>
-            ${pagination.hasNextPage !== false ? `<button onclick="${funcName}(${currentPage + 1})" class="bg-white/10 px-5 py-2 rounded-lg hover:bg-amber-500 hover:text-black font-bold text-xs transition">NEXT</button>` : ''}
+            ${currentPage > 1 ? `<button onclick="${funcName}(${currentPage - 1})" class="bg-white/10 px-6 py-2 rounded-xl hover:bg-amber-500 hover:text-black font-bold text-sm transition">◀ Prev</button>` : ''}
+            <span class="px-4 py-2 text-gray-500 font-mono">Page ${currentPage}</span>
+            ${pagination.hasNextPage ? `<button onclick="${funcName}(${currentPage + 1})" class="bg-white/10 px-6 py-2 rounded-xl hover:bg-amber-500 hover:text-black font-bold text-sm transition">Next ▶</button>` : ''}
         </div>`;
     }
 
     dom.content.innerHTML = `
-    <div class="container mx-auto px-4 py-8 pb-24">
-        <h2 class="text-xl font-bold mb-6 flex items-center gap-3">
-           <span class="w-1 h-6 bg-amber-500 rounded-full"></span> ${titleStr}
+    <div class="container mx-auto px-4 py-8">
+        <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+           <span class="w-1 h-8 bg-amber-500 rounded-full"></span> ${titleStr}
         </h2>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 gap-y-6 animate-fade-in">
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 gap-y-8 animate-fade-in">
             ${items.map(item => cardTemplate(item)).join('')}
         </div>
         ${navHtml}
     </div>`;
 }
 
-
-/* --- PAGE: DETAIL (FIX "Tanpa Judul") --- */
-// -------------------------------------------------------------
-// MASALAH "Tanpa Judul" diatasi di sini dengan memastikan
-// Slug yang dikirim ke API itu Benar (Bukan UUID/undefined)
-// -------------------------------------------------------------
-async function showDetail(idOrSlug, push=true) {
-    let slug = idOrSlug;
-
-    // 1. Resolve UUID jika string panjang
-    if (slug.length === 36) {
-         const m = await getSlug(slug);
-         // Kalau server UUID gagal resolve, m.slug mungkin masih uuid, 
-         // Tapi kita coba request dulu siapa tau hoki, 
-         // ATAU lebih baik kita error kan kalau resolve gagal supaya gak ngerusak UI.
-         if (m) slug = m.slug;
+async function showBookmarks(push=true) {
+    if(push) updateURL('/bookmarks');
+    const b = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
+    setSEO("Bookmarks");
+    
+    if(b.length === 0) {
+        dom.content.innerHTML = `
+        <div class="h-[70vh] flex flex-col items-center justify-center gap-4 text-gray-500">
+            <i class="fa fa-bookmark text-6xl text-amber-900/50"></i>
+            <p>Belum ada bookmark.</p>
+            <button onclick="showHome()" class="text-amber-500 font-bold hover:underline">Cari komik dulu</button>
+        </div>`;
+        return;
     }
     
-    // Setup URL agar bersih
-    const newUuid = await getUuid(slug, 'series');
-    if (push) updateURL(`/series/${newUuid}`);
+    const formatted = b.map(x => ({
+        slug: x.slug, title: x.title, image: x.image, 
+        type: 'Disimpan', latestChapter: 'Akses Cepat'
+    }));
+    
+    dom.content.innerHTML = `
+    <div class="container mx-auto px-4 py-8">
+        <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-1 h-8 bg-amber-500 rounded-full"></span> Koleksi Favorit (${formatted.length})
+        </h2>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 animate-fade-in">
+            ${formatted.map(item => cardTemplate(item)).join('')}
+        </div>
+    </div>`;
+}
+
+async function showHistory(push=true) {
+    if(push) updateURL('/history');
+    setSEO("Riwayat");
+    const h = JSON.parse(localStorage.getItem('fmc_history') || '[]');
+    
+    if(h.length === 0) {
+        dom.content.innerHTML = '<div class="h-[70vh] flex justify-center items-center text-gray-500">Kosong.</div>';
+        return;
+    }
+    
+    dom.content.innerHTML = `
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold border-l-4 border-amber-500 pl-3">Riwayat Baca</h2>
+            <button onclick="if(confirm('Hapus semua riwayat?')){localStorage.removeItem('fmc_history');showHistory()}" 
+                class="text-xs text-red-400 border border-red-500/30 px-3 py-1 rounded-lg hover:bg-red-500 hover:text-white transition">
+                Hapus Data
+            </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            ${h.map(item => `
+                <div class="flex gap-4 p-4 bg-[#1a1a1d] rounded-2xl border border-white/5 cursor-pointer hover:border-amber-500/30 transition group" 
+                    onclick="readChapter('${item.lastChapterSlug}', '${item.slug}')">
+                    <img src="${item.image}" loading="lazy" class="w-20 h-28 object-cover rounded-xl shadow-lg">
+                    <div class="flex-1 flex flex-col justify-center min-w-0">
+                        <h3 class="font-bold text-white mb-2 truncate group-hover:text-amber-500">${item.title}</h3>
+                        <div class="flex flex-col gap-2">
+                             <div class="text-[10px] text-gray-500 uppercase font-bold tracking-wide">Terakhir dibaca:</div>
+                             <div class="bg-amber-500/10 border border-amber-500/20 text-amber-500 px-3 py-1.5 rounded-lg text-xs font-bold w-max">
+                                ${item.lastChapterTitle || 'Lanjut'}
+                             </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    </div>`;
+}
+
+/* --- DETAIL PAGE --- */
+
+async function showDetail(idOrSlug, push=true) {
+    let slug = idOrSlug;
+    
+    // Jika UUID (36 karakter), convert ke slug
+    if (slug.length === 36) {
+        const m = await getSlug(slug);
+        if(m && m.slug) slug = m.slug;
+    }
     
     renderLoading();
-
-    // 2. Fetch Detail dengan slug asli
-    const data = await api(`/detail/${slug}`);
     
-    // 3. VALIDASI EKSTRA: Jika Data Balik tapi Title nya kosong, artinya SLUG Salah atau API Error parsial
-    if (!data || !data.title || data.title === "") {
-        console.error("Failed Data Detail:", data); // Log untuk debug
-        return renderError(
-            'Komik Tidak Ditemukan', 
-            `Gagal mengambil data untuk ID: <b>${slug}</b>.<br>Mungkin broken link dari sumbernya.`, 
-            'showHome()'
-        );
+    // === OPTIMASI: Parallel request untuk UUID dan data detail ===
+    const [uuid, data] = await Promise.all([
+        getUuid(slug, 'series'),
+        api(`/detail/${slug}`)
+    ]);
+    
+    if (push) updateURL(`/series/${uuid}`);
+    
+    if (!data) {
+        dom.content.innerHTML = `
+            <div class="h-screen flex flex-col items-center justify-center text-gray-500">
+                <i class="fa fa-exclamation-triangle text-4xl mb-4"></i>
+                <p>Komik tidak ditemukan</p>
+                <button onclick="showHome()" class="mt-4 text-amber-500 font-bold underline">Kembali</button>
+            </div>`;
+        return;
     }
 
     const info = data;
-    const chapters = info.chapters || [];
-    
-    // Save info
     appState.comicData = info;
-    appState.currentChapterList = chapters;
+    appState.currentChapterList = info.chapters;
     setSEO(info.title);
 
-    // Bookmarks & History logic
     const history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
     const saved = history.find(h => h.slug === slug);
+    
     const btnText = saved ? "Lanjut Baca" : "Mulai Baca";
-    const btnSlug = saved ? saved.lastChapterSlug : (chapters.length > 0 ? chapters[chapters.length - 1].slug : null);
+    const btnSlug = saved ? saved.lastChapterSlug : (info.chapters.length > 0 ? info.chapters[info.chapters.length - 1].slug : null);
     
     const bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
     const isBookmarked = bookmarks.some(b => b.slug === slug);
 
     dom.content.innerHTML = `
-    <!-- Backdrop Header -->
-    <div class="relative h-[45vh] overflow-hidden">
+    <!-- Header BG -->
+    <div class="relative h-[50vh] overflow-hidden">
         <div class="absolute inset-0 bg-[#0a0a0c]"></div>
-        <img src="${info.image}" class="w-full h-full object-cover opacity-20 blur-2xl scale-110">
+        <img src="${info.image}" loading="lazy" class="w-full h-full object-cover opacity-20 blur-3xl scale-110">
         <div class="absolute inset-0 bg-gradient-to-t from-[#0a0a0c] via-[#0a0a0c]/80 to-transparent"></div>
     </div>
 
-    <div class="container mx-auto px-4 -mt-56 relative z-10 pb-20">
-        <div class="flex flex-col md:flex-row gap-8">
-            <!-- Cover & Actions -->
-            <div class="w-[180px] md:w-[260px] shrink-0 mx-auto md:mx-0 flex flex-col gap-4">
-                <div class="rounded-xl p-1 bg-white/5 border border-white/5 shadow-2xl">
-                    <img src="${info.image}" class="w-full rounded-lg object-cover aspect-[2/3] bg-black">
-                </div>
+    <div class="container mx-auto px-4 -mt-64 relative z-10 pb-20">
+        <div class="flex flex-col md:flex-row gap-10">
+            <!-- Cover -->
+            <div class="w-[200px] md:w-[280px] shrink-0 mx-auto md:mx-0 flex flex-col gap-4">
+                <img src="${info.image}" loading="lazy" class="w-full rounded-xl shadow-2xl border-4 border-white/5 object-cover aspect-[2/3]">
                 
                 ${btnSlug ? `
-                <button onclick="readChapter('${btnSlug}', '${slug}')" class="w-full bg-amber-500 hover:bg-amber-400 text-black py-3 rounded-xl font-bold shadow-lg shadow-amber-500/20 active:scale-95 transition flex justify-center gap-2 items-center">
+                <button onclick="readChapter('${btnSlug}', '${slug}')" 
+                    class="w-full bg-amber-500 hover:bg-amber-400 text-black py-3.5 rounded-xl font-bold shadow-lg hover:scale-[1.02] transition flex justify-center gap-2 items-center">
                     <i class="fa fa-book-open"></i> ${btnText}
-                </button>` : 
-                '<div class="py-2 text-center text-xs text-red-400 bg-red-900/10 rounded-lg border border-red-500/20">Chapter Kosong</div>'}
+                </button>` : ''}
                 
-                <button id="btn-bm" onclick="toggleBookmark('${slug}', \`${(info.title||'').replace(/'/g, "")}\`, '${info.image}')" 
-                    class="w-full border py-3 rounded-xl font-semibold transition flex justify-center gap-2 items-center ${isBookmarked ? 'border-amber-500 text-amber-500 bg-amber-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10 text-gray-300'}">
-                    <i class="${isBookmarked ? 'fa-solid' : 'fa-regular'} fa-bookmark"></i> <span>${isBookmarked ? 'Saved' : 'Bookmark'}</span>
+                <button id="btn-bookmark" onclick="toggleBookmark('${slug}', '${info.title}', '${info.image}')" 
+                    class="w-full py-3 rounded-xl font-bold border ${isBookmarked ? 'bg-amber-500 text-black border-amber-500' : 'border-white/10 text-gray-300 hover:border-amber-500'} transition">
+                    <i class="fa fa-bookmark mr-2"></i> ${isBookmarked ? 'Tersimpan' : 'Simpan'}
                 </button>
             </div>
 
-            <!-- Detail Text -->
-            <div class="flex-1 text-center md:text-left">
-                <h1 class="text-2xl md:text-5xl font-black text-white mb-4 leading-tight">${info.title}</h1>
-                
-                <div class="flex flex-wrap justify-center md:justify-start gap-2 mb-6 text-xs font-bold uppercase text-gray-400">
-                    <span class="px-2 py-1 bg-white/5 rounded border border-white/5 text-amber-500"><i class="fa fa-star mr-1"></i> ${info.rating || '0'}</span>
-                    <span class="px-2 py-1 bg-white/5 rounded border border-white/5 ${String(info.status).toLowerCase() === 'ongoing' ? 'text-green-400' : 'text-blue-400'}">${info.status}</span>
-                    <span class="px-2 py-1 bg-white/5 rounded border border-white/5">${info.type}</span>
-                </div>
-
-                <div class="mb-8 bg-[#151518] p-5 rounded-2xl border border-white/5 text-left">
-                    <p class="text-gray-300 leading-relaxed text-sm md:text-base font-light text-justify max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                        ${info.synopsis || "Deskripsi tidak tersedia."}
-                    </p>
-                    <div class="mt-4 flex flex-wrap gap-1.5">
-                        ${(info.genres || []).map(g => `<span class="text-[10px] border border-white/10 px-2 py-1 rounded text-gray-400">${g.title}</span>`).join('')}
+            <!-- Info -->
+            <div class="flex-1 space-y-6">
+                <div>
+                    <h1 class="text-3xl md:text-4xl font-black text-white mb-3">${info.title}</h1>
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        ${info.type ? `<span class="px-3 py-1 rounded-lg text-xs font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">${info.type}</span>` : ''}
+                        ${info.status ? `<span class="px-3 py-1 rounded-lg text-xs font-bold ${info.status === 'Ongoing' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' : 'bg-green-500/20 text-green-400 border-green-500/30'} border">${info.status}</span>` : ''}
                     </div>
                 </div>
+
+                ${info.synopsis ? `
+                <div class="bg-[#1a1a1d] p-6 rounded-2xl border border-white/5">
+                    <h3 class="text-sm font-bold text-amber-500 mb-3 uppercase tracking-wider">Sinopsis</h3>
+                    <p class="text-gray-300 text-sm leading-relaxed">${info.synopsis}</p>
+                </div>` : ''}
+
+                ${info.genres && info.genres.length > 0 ? `
+                <div>
+                    <h3 class="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Genre</h3>
+                    <div class="flex flex-wrap gap-2">
+                        ${info.genres.map(g => `
+                            <button onclick="showGenre('${g.slug || g}')" 
+                                class="px-4 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-amber-500 hover:text-amber-500 text-xs font-semibold transition">
+                                ${g.name || g}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>` : ''}
 
                 <!-- Chapter List -->
-                <div class="bg-[#151518] rounded-2xl border border-white/5 overflow-hidden text-left">
-                    <div class="p-4 border-b border-white/5 flex flex-wrap justify-between items-center gap-4 bg-white/[0.02]">
-                        <h3 class="font-bold text-sm">List Chapter (${chapters.length})</h3>
-                        <input type="text" onkeyup="filterChapters(this.value)" placeholder="Cari No. Chapter..." class="bg-black/30 border border-white/10 px-3 py-1.5 rounded text-xs w-full sm:w-auto focus:border-amber-500 focus:outline-none">
-                    </div>
-                    
-                    <div id="chapter-list-wrap" class="max-h-[500px] overflow-y-auto custom-scrollbar p-2 space-y-1">
-                        ${chapters.length > 0 ? chapters.map(c => `
-                            <div class="ch-item group flex items-center justify-between p-3 rounded-lg cursor-pointer hover:bg-white/5 border border-transparent hover:border-white/5 transition ${c.slug === saved?.lastChapterSlug ? 'bg-amber-900/10 border-amber-500/20' : ''}"
-                                onclick="readChapter('${c.slug}', '${slug}')">
-                                <span class="text-xs md:text-sm font-semibold text-gray-300 group-hover:text-amber-500 transition truncate ${c.slug === saved?.lastChapterSlug ? '!text-amber-500' : ''}">
-                                    ${c.title}
-                                </span>
-                                <span class="text-[9px] text-gray-500 whitespace-nowrap bg-black/20 px-2 py-0.5 rounded">${c.time || '-'}</span>
-                            </div>
-                        `).join('') : '<div class="p-10 text-center text-gray-500 text-xs italic">Belum ada chapter yang dirilis.</div>'}
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                        <i class="fa fa-list text-amber-500"></i> Daftar Chapter (${info.chapters.length})
+                    </h3>
+                    <div class="max-h-[500px] overflow-y-auto space-y-2 pr-2 hide-scroll">
+                        ${info.chapters.map(ch => `
+                            <button onclick="readChapter('${ch.slug}', '${slug}')" 
+                                class="w-full p-4 rounded-xl bg-[#1a1a1d] border border-white/5 hover:border-amber-500 hover:bg-[#25252b] transition text-left group flex justify-between items-center">
+                                <span class="font-semibold text-white group-hover:text-amber-500 transition">${ch.title}</span>
+                                <i class="fa fa-chevron-right text-gray-600 group-hover:text-amber-500 transition"></i>
+                            </button>
+                        `).join('')}
                     </div>
                 </div>
             </div>
@@ -557,227 +665,251 @@ async function showDetail(idOrSlug, push=true) {
     </div>`;
 }
 
-function filterChapters(val) {
-    val = val.toLowerCase();
-    document.querySelectorAll('.ch-item').forEach(el => {
-        el.style.display = el.textContent.toLowerCase().includes(val) ? "flex" : "none";
-    });
-}
+/* --- READER PAGE --- */
 
-function toggleBookmark(slug, title, image) {
-    let b = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
-    const idx = b.findIndex(x => x.slug === slug);
-    const btn = document.getElementById('btn-bm');
-    
-    if (idx > -1) {
-        b.splice(idx, 1);
-        if(btn) {
-            btn.className = "w-full border border-white/10 bg-white/5 hover:bg-white/10 text-gray-300 py-3 rounded-xl font-semibold transition flex justify-center gap-2 items-center";
-            btn.innerHTML = `<i class="fa-regular fa-bookmark"></i> <span>Bookmark</span>`;
-        }
-        showToast('Dihapus dari Library');
-    } else {
-        b.push({ slug, title, image, added: Date.now() });
-        if(btn) {
-            btn.className = "w-full border border-amber-500 text-amber-500 bg-amber-500/10 py-3 rounded-xl font-semibold transition flex justify-center gap-2 items-center";
-            btn.innerHTML = `<i class="fa-solid fa-bookmark"></i> <span>Saved</span>`;
-        }
-        showToast('Tersimpan di Library', 'success');
-    }
-    localStorage.setItem('fmc_bookmarks', JSON.stringify(b));
-}
-
-
-/* --- PAGE: READER --- */
-
-async function readChapter(chIdOrSlug, comicSlug, push=true) {
-    if (appState.isNavigating) return;
-    appState.isNavigating = true; // Lock ui
-
-    // Resolve slug
+async function readChapter(chIdOrSlug, comicSlug = null, push = true) {
     let chSlug = chIdOrSlug;
+    
+    // Convert UUID ke slug jika perlu
     if (chSlug.length === 36) {
         const m = await getSlug(chSlug);
-        chSlug = m ? m.slug : chSlug;
+        if(m && m.slug) chSlug = m.slug;
     }
-
-    // UI Loading state
+    
+    renderLoading();
+    
+    // Hide navbar untuk reader mode
     dom.navs.main.classList.add('-translate-y-full');
     dom.navs.mobile.classList.add('translate-y-full');
-    const oldContent = dom.content.innerHTML;
     
-    dom.content.innerHTML = `<div class="bg-[#050505] min-h-screen flex items-center justify-center gap-3">
-        <div class="w-8 h-8 border-4 border-amber-600 border-b-transparent rounded-full animate-spin"></div>
-        <span class="text-xs text-gray-500 font-mono animate-pulse">Load Chapter...</span>
-    </div>`;
-
-    // Fetch API
-    const data = await api(`/chapter/${chSlug}`);
-    appState.isNavigating = false; // unlock
-
-    // Jika gagal
-    if (!data) {
-        showToast('Gagal memuat chapter.', 'error');
-        dom.content.innerHTML = oldContent; // Restore previous page
-        dom.navs.main.classList.remove('-translate-y-full');
-        dom.navs.mobile.classList.remove('translate-y-full');
+    // === OPTIMASI: Parallel request ===
+    const [uuid, data] = await Promise.all([
+        getUuid(chSlug, 'chapter'),
+        api(`/chapter/${chSlug}`, false) // Jangan cache chapter (selalu fresh)
+    ]);
+    
+    if (push) updateURL(`/chapter/${uuid}`);
+    
+    if (!data || !data.images || data.images.length === 0) {
+        dom.content.innerHTML = `
+            <div class="h-screen flex flex-col items-center justify-center text-gray-500">
+                <i class="fa fa-exclamation-triangle text-4xl mb-4"></i>
+                <p>Chapter tidak ditemukan atau kosong</p>
+                ${comicSlug ? `<button onclick="showDetail('${comicSlug}')" class="mt-4 text-amber-500 font-bold underline">Kembali</button>` : ''}
+            </div>`;
         return;
     }
 
-    // Update URL
-    if(push) {
-        const u = await getUuid(chSlug, 'chapter');
-        updateURL(`/chapter/${u}`);
+    const chapter = data;
+    setSEO(chapter.title);
+
+    // Save history
+    if (chapter.comicSlug || comicSlug) {
+        saveReaderHistory(chapter.comicSlug || comicSlug, chapter.title, chSlug, chapter.comicTitle, chapter.comicImage);
     }
 
-    // Parse Metadata
-    const parentSlug = comicSlug || data.comic_slug || 'home';
-    const parentTitle = appState.comicData?.title || data.comic_title || 'Comic Reader';
-    // Membersihkan judul chapter (e.g "One Piece Chapter 100" -> "Chapter 100")
-    const displayTitle = (data.title || '').replace(parentTitle, '').trim(); 
-
-    // Update History
-    saveReaderHistory(parentSlug, parentTitle, appState.comicData?.image, chSlug, displayTitle || 'Reading');
-    setSEO(`${displayTitle} - ${parentTitle}`);
-
-    const images = data.images || [];
+    // Render reader UI
+    const prevBtn = chapter.prevSlug ? `<button onclick="readChapter('${chapter.prevSlug}', '${chapter.comicSlug}')" class="px-6 py-3 bg-white/10 hover:bg-amber-500 hover:text-black rounded-xl font-bold transition flex items-center gap-2"><i class="fa fa-chevron-left"></i> Prev</button>` : '';
+    const nextBtn = chapter.nextSlug ? `<button onclick="readChapter('${chapter.nextSlug}', '${chapter.comicSlug}')" class="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black rounded-xl font-bold transition flex items-center gap-2">Next <i class="fa fa-chevron-right"></i></button>` : '';
 
     dom.content.innerHTML = `
-    <div id="reader-wrapper" class="bg-[#050505] min-h-screen relative pb-20 select-none">
-        <!-- Floating Header -->
-        <div id="r-head" class="fixed top-0 inset-x-0 z-[60] bg-black/90 backdrop-blur transition-transform duration-300 flex justify-between items-center p-3 border-b border-white/5">
-             <div class="flex items-center gap-3 overflow-hidden">
-                <button onclick="showDetail('${parentSlug}')" class="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center hover:bg-amber-500 hover:text-black transition text-gray-400">
-                    <i class="fa fa-arrow-left"></i>
-                </button>
-                <div class="flex flex-col truncate">
-                    <h3 class="text-[10px] text-gray-400 font-bold uppercase truncate max-w-[200px]">${parentTitle}</h3>
-                    <span class="text-xs font-bold text-white truncate">${displayTitle}</span>
-                </div>
-             </div>
-             <button onclick="toggleReaderSettings()" class="w-9 h-9 text-gray-400 hover:text-white"><i class="fa fa-gear"></i></button>
+    <!-- Reader Header -->
+    <div id="reader-header" class="fixed top-0 left-0 w-full bg-[#0a0a0c]/95 backdrop-blur-xl border-b border-white/10 z-50 transition-all duration-300">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+            <button onclick="${chapter.comicSlug ? `showDetail('${chapter.comicSlug}')` : 'history.back()'}" 
+                class="text-gray-300 hover:text-white flex items-center gap-2 font-semibold transition">
+                <i class="fa fa-arrow-left"></i> <span class="hidden md:inline">Kembali</span>
+            </button>
+            <div class="flex-1 mx-4 text-center min-w-0">
+                <h1 class="font-bold text-white truncate text-sm md:text-base">${chapter.title}</h1>
+                <p class="text-xs text-gray-500 truncate">${chapter.comicTitle || ''}</p>
+            </div>
+            <button onclick="toggleReaderSettings()" class="text-gray-300 hover:text-amber-500 transition">
+                <i class="fa fa-gear text-xl"></i>
+            </button>
         </div>
+    </div>
 
-        <!-- Image Area -->
-        <div id="img-container" class="flex flex-col items-center pt-14 min-h-screen ${appState.settings.fitMode === 'original' ? 'reader-full-width' : 'reader-max-width'}" onclick="toggleReaderUI()">
-            ${images.length === 0 ? '<p class="text-gray-500 my-40">Tidak ada gambar (Broken Source)</p>' : ''}
+    <!-- Reader Content -->
+    <div class="pt-24 pb-32 min-h-screen bg-black">
+        <div id="reader-container" class="reader-max-width mx-auto">
+            ${chapter.images.map((img, idx) => `
+                <img src="${img}" 
+                     alt="Page ${idx + 1}" 
+                     loading="${idx < 3 ? 'eager' : 'lazy'}"
+                     class="comic-page mb-1 w-full h-auto" 
+                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'800\' height=\'1200\'%3E%3Crect fill=\'%231a1a1d\' width=\'800\' height=\'1200\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' fill=\'%23666\' font-size=\'20\' font-family=\'Arial\'%3EGagal memuat gambar%3C/text%3E%3C/svg%3E'" />
+            `).join('')}
         </div>
+    </div>
 
-        <!-- Footer Nav -->
-        <div id="r-foot" class="fixed bottom-6 inset-x-0 z-[60] flex justify-center pointer-events-none transition-transform duration-300">
-             <div class="pointer-events-auto bg-[#1a1a1d]/90 backdrop-blur border border-white/5 px-4 py-2 rounded-2xl flex items-center gap-4 shadow-2xl">
-                <button ${data.navigation?.prev ? `onclick="readChapter('${data.navigation.prev}','${parentSlug}')"` : 'disabled class="opacity-30"'} class="text-2xl text-amber-500 hover:scale-110 transition">
-                    <i class="fa fa-circle-chevron-left"></i>
-                </button>
-                
-                <span class="text-xs font-bold text-gray-400 px-2">NAVIGASI</span>
-
-                <button ${data.navigation?.next ? `onclick="readChapter('${data.navigation.next}','${parentSlug}')"` : 'onclick="showDetail(\''+parentSlug+'\') class="text-green-500"'} class="text-2xl text-amber-500 hover:scale-110 transition">
-                    ${data.navigation?.next ? '<i class="fa fa-circle-chevron-right"></i>' : '<i class="fa fa-check-circle"></i>'}
-                </button>
-             </div>
+    <!-- Reader Footer Nav -->
+    <div id="reader-footer" class="fixed bottom-0 left-0 w-full bg-[#0a0a0c]/95 backdrop-blur-xl border-t border-white/10 z-50 transition-all duration-300">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center gap-4">
+            ${prevBtn}
+            <span class="text-sm text-gray-500 font-mono flex-1 text-center">${chapter.images.length} Halaman</span>
+            ${nextBtn}
         </div>
-    </div>`;
+    </div>
+    `;
 
-    // Render Images one by one logic (Better than loop)
-    const container = document.getElementById('img-container');
-    if (images.length > 0) {
-        images.forEach(src => {
-            const wrap = document.createElement('div');
-            // Hack for full width fit
-            wrap.className = "w-full relative min-h-[40vh] bg-[#111] mb-0 flex items-center justify-center";
-            wrap.innerHTML = `<p class="absolute text-[10px] text-gray-700 font-mono">Loading...</p><img src="${src}" class="relative z-10 w-full h-auto opacity-0 transition-opacity duration-300" loading="lazy">`;
-            
-            const img = wrap.querySelector('img');
-            img.onload = () => { img.classList.remove('opacity-0'); wrap.querySelector('p')?.remove(); };
-            img.onerror = () => { wrap.innerHTML = `<div class="py-20 w-full text-center text-xs text-red-500 bg-red-900/10">Image Error<br><span class="text-[9px] text-gray-600 truncate max-w-xs block mx-auto">${src}</span></div>`; };
-            
-            container.appendChild(wrap);
-        });
-    }
+    // Auto-hide UI on scroll
+    let scrollTimeout;
+    window.onscroll = () => {
+        const header = document.getElementById('reader-header');
+        const footer = document.getElementById('reader-footer');
+        
+        header?.classList.add('ui-hidden-top');
+        footer?.classList.add('ui-hidden-bottom');
+        
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+            header?.classList.remove('ui-hidden-top');
+            footer?.classList.remove('ui-hidden-bottom');
+        }, 150);
+    };
+}
+
+function saveReaderHistory(slug, chapterTitle, chapterSlug, comicTitle, comicImage) {
+    let history = JSON.parse(localStorage.getItem('fmc_history') || '[]');
     
-    window.scrollTo(0,0);
-}
-
-// History & Utils (No Change needed, standard storage logic)
-function saveReaderHistory(slug, title, image, chSlug, chTitle) {
-    if(!title || !slug) return;
-    let h = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-    h = h.filter(x => x.slug !== slug);
-    h.unshift({ slug, title, image: image || 'assets/icon.png', lastChapterSlug: chSlug, lastChapterTitle: chTitle, time: Date.now() });
-    if(h.length > 50) h.pop();
-    localStorage.setItem('fmc_history', JSON.stringify(h));
-}
-
-function showBookmarks(push=true) {
-    if(push) updateURL('/bookmarks');
-    const b = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
-    setSEO("Bookmarks");
+    // Hapus duplikat
+    history = history.filter(h => h.slug !== slug);
     
-    if(b.length === 0) return dom.content.innerHTML = `<div class="h-[70vh] flex flex-col items-center justify-center gap-4 text-gray-500"><i class="fa fa-bookmark text-6xl opacity-20"></i><p>Library Kosong</p><button onclick="showHome()" class="text-amber-500">Mulai Baca</button></div>`;
-    
-    dom.content.innerHTML = `
-    <div class="container mx-auto px-4 py-8">
-        <h2 class="text-xl font-bold mb-6 border-l-4 border-amber-500 pl-4">Library Saya</h2>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 animate-fade-in">
-            ${b.map(x => cardTemplate({ title: x.title, slug: x.slug, image: x.image, latestChapter: 'Disimpan' })).join('')}
-        </div>
-    </div>`;
-}
-
-function showHistory(push=true) {
-    if(push) updateURL('/history');
-    setSEO("Riwayat");
-    const h = JSON.parse(localStorage.getItem('fmc_history') || '[]');
-    if(h.length===0) return dom.content.innerHTML = '<div class="h-[70vh] flex justify-center items-center text-gray-500">Belum ada riwayat baca.</div>';
-    
-    dom.content.innerHTML = `
-    <div class="container mx-auto px-4 py-8">
-        <div class="flex justify-between items-center mb-6"><h2 class="text-xl font-bold">Riwayat</h2><button onclick="localStorage.removeItem('fmc_history');showHistory()" class="text-red-500 text-xs">Clear All</button></div>
-        <div class="flex flex-col gap-3">
-             ${h.map(i => `<div class="flex gap-4 p-3 bg-[#151518] rounded-xl cursor-pointer hover:bg-white/5" onclick="readChapter('${i.lastChapterSlug}','${i.slug}')"><img src="${i.image}" class="w-16 h-20 rounded object-cover"><div class="flex-1 my-auto"><h4 class="font-bold text-sm text-white">${i.title}</h4><p class="text-xs text-amber-500 mt-1">Lanjut: ${i.lastChapterTitle}</p></div></div>`).join('')}
-        </div>
-    </div>`;
-}
-
-// Toggle UI Readers
-function toggleReaderUI() {
-    const head = document.getElementById('r-head');
-    const foot = document.getElementById('r-foot');
-    if(head) head.classList.toggle('-translate-y-full');
-    if(foot) foot.classList.toggle('translate-y-[200%]');
-}
-function toggleReaderSettings() { document.getElementById('reader-settings').classList.toggle('hidden'); }
-function changeBrightness(val) { 
-    appState.settings.brightness = val; 
-    document.getElementById('bright-val').innerText = val + '%';
-    document.getElementById('brightness-overlay').style.opacity = (100-val)/100;
-    localStorage.setItem('fmc_settings', JSON.stringify(appState.settings));
-}
-function toggleImageFit() {
-    const c = document.getElementById('img-container');
-    const isOrig = appState.settings.fitMode === 'original';
-    appState.settings.fitMode = isOrig ? 'contain' : 'original';
-    if(isOrig) { c.classList.add('reader-max-width'); c.classList.remove('reader-full-width'); }
-    else { c.classList.remove('reader-max-width'); c.classList.add('reader-full-width'); }
-    localStorage.setItem('fmc_settings', JSON.stringify(appState.settings));
-}
-function applySettings() {
-    changeBrightness(appState.settings.brightness);
-    if(document.getElementById('brightness-slider')) document.getElementById('brightness-slider').value = appState.settings.brightness;
-}
-
-// Misc
-function loadGenres() {
-    api('/genres').then(d => {
-        if(d && Array.isArray(d)) {
-             const s = document.getElementById('filter-genre');
-             d.sort((a,b)=>a.title.localeCompare(b.title)).forEach(g => {
-                 const o = document.createElement('option'); o.value = g.slug; o.text = g.title; s.appendChild(o);
-             });
-        }
+    // Tambahkan di depan
+    history.unshift({
+        slug,
+        title: comicTitle,
+        image: comicImage,
+        lastChapterSlug: chapterSlug,
+        lastChapterTitle: chapterTitle,
+        timestamp: Date.now()
     });
+    
+    // Limit 50 riwayat
+    if (history.length > 50) history = history.slice(0, 50);
+    
+    localStorage.setItem('fmc_history', JSON.stringify(history));
 }
-function showGenre(g) { genericListLoad(`${API_BASE}/genre/${g}/1`, `Genre: ${g}`, 'showGenreFromLink', 1); }
-function toggleFilter() { dom.filterPanel.classList.toggle('hidden'); }
-function handleSearchInput() {}
+
+/* --- BOOKMARKS --- */
+
+function toggleBookmark(slug, title, image) {
+    let bookmarks = JSON.parse(localStorage.getItem('fmc_bookmarks') || '[]');
+    const exists = bookmarks.findIndex(b => b.slug === slug);
+    
+    if (exists >= 0) {
+        bookmarks.splice(exists, 1);
+        showToast('Dihapus dari bookmark', 'info');
+    } else {
+        bookmarks.unshift({ slug, title, image, timestamp: Date.now() });
+        showToast('Ditambahkan ke bookmark', 'success');
+    }
+    
+    localStorage.setItem('fmc_bookmarks', JSON.stringify(bookmarks));
+    
+    // Update button
+    const btn = document.getElementById('btn-bookmark');
+    if (btn) {
+        const isBookmarked = exists < 0;
+        btn.className = `w-full py-3 rounded-xl font-bold border ${isBookmarked ? 'bg-amber-500 text-black border-amber-500' : 'border-white/10 text-gray-300 hover:border-amber-500'} transition`;
+        btn.innerHTML = `<i class="fa fa-bookmark mr-2"></i> ${isBookmarked ? 'Tersimpan' : 'Simpan'}`;
+    }
+}
+
+/* --- GENRES --- */
+
+async function loadGenres() {
+    const data = await api('/genres');
+    if (!data || !data.genres) return;
+    
+    const select = document.getElementById('filter-genre');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">Semua Genre</option>' + 
+        data.genres.map(g => `<option value="${g.slug}">${g.name}</option>`).join('');
+}
+
+async function showGenre(slug) {
+    genericListLoad(`/genre/${slug}/1`, `Genre: ${slug}`, null);
+}
+
+/* --- SEARCH --- */
+
+function handleSearchInput(e) {
+    clearTimeout(appState.debounceTimer);
+    
+    const query = e.target.value.trim();
+    if (query.length < 2) return;
+    
+    appState.debounceTimer = setTimeout(() => {
+        // Auto-search on typing (optional, bisa di-disable)
+        // applyAdvancedFilter();
+    }, 800);
+}
+
+/* --- SETTINGS --- */
+
+function toggleFilter() {
+    dom.filterPanel.classList.toggle('hidden');
+}
+
+function toggleReaderSettings() {
+    const panel = document.getElementById('reader-settings');
+    if (!panel) return;
+    
+    panel.classList.toggle('hidden');
+    
+    if (!panel.classList.contains('hidden')) {
+        setTimeout(() => {
+            panel.style.transform = 'scale(1)';
+            panel.style.opacity = '1';
+        }, 10);
+    } else {
+        panel.style.transform = 'scale(0.9)';
+        panel.style.opacity = '0';
+    }
+}
+
+function toggleImageFit() {
+    const container = document.getElementById('reader-container');
+    const btn = document.getElementById('btn-fit-toggle');
+    if (!container || !btn) return;
+    
+    if (container.classList.contains('reader-max-width')) {
+        container.classList.remove('reader-max-width');
+        container.classList.add('reader-full-width');
+        btn.textContent = 'Full Width';
+        appState.settings.fitMode = 'cover';
+    } else {
+        container.classList.add('reader-max-width');
+        container.classList.remove('reader-full-width');
+        btn.textContent = 'Fit Width';
+        appState.settings.fitMode = 'contain';
+    }
+    
+    localStorage.setItem('fmc_settings', JSON.stringify(appState.settings));
+}
+
+function changeBrightness(val) {
+    document.getElementById('bright-val').textContent = val + '%';
+    const overlay = dom.overlay;
+    const opacity = (100 - val) / 100;
+    overlay.style.opacity = opacity;
+    
+    appState.settings.brightness = val;
+    localStorage.setItem('fmc_settings', JSON.stringify(appState.settings));
+}
+
+function applySettings() {
+    const s = appState.settings;
+    
+    // Apply brightness
+    if (s.brightness) {
+        const slider = document.getElementById('brightness-slider');
+        if (slider) slider.value = s.brightness;
+        changeBrightness(s.brightness);
+    }
+}
+
+console.log('🚀 FmcComic v2.1 - Optimized & Ready!');
