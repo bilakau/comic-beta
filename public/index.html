@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <base href="/" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  
+  <!-- FIX 1: PENTING UNTUK GAMBAR AGAR MUNCUL -->
+  <meta name="referrer" content="no-referrer" />
+  
   <meta name="description" content="Baca komik manga, manhwa, dan manhua gratis tanpa iklan." />
   <title>FmcComic - Free Comic Tanpa Iklan</title>
 
@@ -118,7 +122,7 @@
   <footer class="pb-32 pt-10 border-t border-white/5 mt-10">
       <div class="container mx-auto text-center">
           <div class="flex justify-center items-center gap-2 mb-4 opacity-50 grayscale hover:grayscale-0 transition">
-            <img src="assets/icon.png" class="w-8 h-8 rounded-lg" />
+            <img src="assets/icon.png" class="w-8 h-8 rounded-lg" onerror="this.style.display='none'" />
             <h3 class="font-bold text-lg text-white">FmcComic</h3>
           </div>
           <p class="text-xs text-gray-600"> &copy; 2025 FmcProject. Dibuat dengan <i class="fa fa-heart text-red-900"></i> untuk wibu.</p>
