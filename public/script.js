@@ -3,7 +3,7 @@
   Fitur Perbaikan: Parallel Loading, Advanced Caching, Image Lazy Load
 */
 
-const API_PROXY = "https://api.nekolabs.web.id/px?url=";
+const API_PROXY = "https://rynekoo-api.hf.space/px?url=";
 const API_BASE = "https://www.sankavollerei.com/comic/komikcast";
 const BACKEND_URL = window.location.origin;
 
